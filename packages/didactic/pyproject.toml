@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "didactic"
+version = "0.1.0"
+description = "Pydantic-class API on top of panproto: GATs, lenses, and VCS."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [
+    { name = "Aaron Steven White", email = "aaronstevenwhite@gmail.com" },
+]
+keywords = ["schema", "models", "validation", "lenses", "gat", "panproto"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = [
+    "panproto>=0.42",
+    "annotated-types>=0.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/panproto/didactic"
+Repository = "https://github.com/panproto/didactic"
+
+[project.scripts]
+didactic = "didactic.cli._cli:main"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/didactic"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/didactic"]
