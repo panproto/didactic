@@ -40,7 +40,7 @@ each is documented in the [Changelog](changelog.md).
 
 ## panproto compatibility
 
-didactic pins panproto via a `>=` floor (currently `panproto>=0.42`).
+didactic pins panproto via a `>=` floor (currently `panproto>=0.43`).
 panproto's wire format may change between minor releases; didactic
 absorbs the difference internally so `import didactic` keeps working
 across panproto upgrades within the supported range.

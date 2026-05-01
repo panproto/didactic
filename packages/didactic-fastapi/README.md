@@ -1,7 +1,14 @@
 # didactic-fastapi
 
-FastAPI integration for `dx.Model` types. Contributes
-`didactic.fastapi` to the namespace package.
+*FastAPI integration for `dx.Model` types.*
+
+[![PyPI](https://img.shields.io/pypi/v/didactic-fastapi?style=flat-square&color=blue)](https://pypi.org/project/didactic-fastapi/)
+[![Python](https://img.shields.io/pypi/pyversions/didactic-fastapi?style=flat-square)](https://pypi.org/project/didactic-fastapi/)
+[![License](https://img.shields.io/pypi/l/didactic-fastapi?style=flat-square&color=green)](https://github.com/panproto/didactic/blob/main/LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/panproto/didactic/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/panproto/didactic/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-panproto.dev-blue?style=flat-square)](https://panproto.dev/didactic/guide/fastapi/)
+
+Contributes `didactic.fastapi` to the namespace package.
 
 ## Install
 
@@ -12,7 +19,7 @@ pip install didactic-fastapi
 The package depends on `didactic`, `didactic-pydantic`, and
 `fastapi>=0.115`.
 
-## Usage
+## Quickstart
 
 ```python
 import didactic.api as dx
@@ -53,4 +60,4 @@ for the full integration guide and caveats.
 
 ## License
 
-MIT.
+Released under the [MIT License](https://github.com/panproto/didactic/blob/main/LICENSE).

@@ -1,7 +1,14 @@
 # didactic-settings
 
-Typed application settings on top of `dx.Model`. Contributes
-`didactic.settings` to the namespace package.
+*Typed application settings on top of `dx.Model`.*
+
+[![PyPI](https://img.shields.io/pypi/v/didactic-settings?style=flat-square&color=blue)](https://pypi.org/project/didactic-settings/)
+[![Python](https://img.shields.io/pypi/pyversions/didactic-settings?style=flat-square)](https://pypi.org/project/didactic-settings/)
+[![License](https://img.shields.io/pypi/l/didactic-settings?style=flat-square&color=green)](https://github.com/panproto/didactic/blob/main/LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/panproto/didactic/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/panproto/didactic/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-panproto.dev-blue?style=flat-square)](https://panproto.dev/didactic/guide/settings/)
+
+Contributes `didactic.settings` to the namespace package.
 
 ## Install
 
@@ -13,7 +20,7 @@ pip install 'didactic-settings[yaml]'   # adds YAML support
 The package depends on `didactic`. The optional `yaml` extra adds
 PyYAML for `.yaml` / `.yml` config files.
 
-## Usage
+## Quickstart
 
 ```python
 import didactic.api as dx
@@ -60,4 +67,4 @@ reporting.
 
 ## License
 
-MIT.
+Released under the [MIT License](https://github.com/panproto/didactic/blob/main/LICENSE).
