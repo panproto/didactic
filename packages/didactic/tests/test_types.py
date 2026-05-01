@@ -208,3 +208,178 @@ def test_nested_dict_of_optional() -> None:
     src: dict[str, FieldValue] = {"a": 1, "b": None}
     decoded = t.decode(t.encode(src))
     assert decoded == src
+
+
+# -- PEP 695 type aliases (gh #2.1) ----------------------------------------
+
+type _AliasedKind = Literal["a", "b", "c"]
+type _AliasedInt = int
+
+
+def test_pep695_alias_to_literal_translates() -> None:
+    t = classify(_AliasedKind)
+    assert t.sort.startswith("Enum")
+    assert t.decode(t.encode("a")) == "a"
+
+
+def test_pep695_alias_to_scalar_translates() -> None:
+    t = classify(_AliasedInt)
+    assert t.sort == "Int"
+    assert t.decode(t.encode(7)) == 7
+
+
+def test_pep695_alias_inside_dict_translates() -> None:
+    t = classify(dict[str, _AliasedKind])
+    assert t.sort.startswith("Map String (Enum")
+    src: dict[str, FieldValue] = {"x": "a", "y": "b"}
+    assert t.decode(t.encode(src)) == src
+
+
+# -- union of primitives (gh #3, #2.3) -------------------------------------
+
+
+def test_union_int_str_translates() -> None:
+    t = classify(int | str)
+    assert "Int" in t.sort and "String" in t.sort
+    assert t.decode(t.encode(42)) == 42
+    assert t.decode(t.encode("hello")) == "hello"
+
+
+def test_union_float_str_round_trip() -> None:
+    t = classify(float | str)
+    assert t.decode(t.encode(1.5)) == 1.5
+    assert t.decode(t.encode("verse_2")) == "verse_2"
+
+
+def test_union_with_none_then_two_primitives() -> None:
+    t = classify(int | str | None)
+    assert t.is_optional
+    assert t.decode(t.encode(None)) is None
+    assert t.decode(t.encode(7)) == 7
+    assert t.decode(t.encode("x")) == "x"
+
+
+def test_dict_value_union_of_primitives() -> None:
+    t = classify(dict[str, int | float | str])
+    src: dict[str, FieldValue] = {"a": 1, "b": 2.5, "c": "tag"}
+    decoded = t.decode(t.encode(src))
+    assert decoded == src
+
+
+def test_union_of_non_primitives_still_rejected() -> None:
+    class _M:
+        pass
+
+    with pytest.raises(TypeNotSupportedError):
+        classify(int | _M)
+
+
+# -- recursive JSON-shaped type aliases (gh #2.2) --------------------------
+
+type _JsonValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | list["_JsonValue"]
+    | tuple["_JsonValue", ...]
+    | dict[str, "_JsonValue"]
+)
+
+
+def test_recursive_json_alias_classifies_as_named_sort() -> None:
+    t = classify(_JsonValue)
+    assert t.sort == "_JsonValue"
+
+
+def test_recursive_json_alias_round_trips_primitives() -> None:
+    t = classify(_JsonValue)
+    for value in ("hello", 42, 1.5, True, False, None):
+        assert t.decode(t.encode(value)) == value
+
+
+def test_recursive_json_alias_round_trips_nested_dict() -> None:
+    t = classify(_JsonValue)
+    src: object = {"a": 1, "b": {"c": [1, 2, 3], "d": None}, "e": True}
+    decoded = t.decode(t.encode(src))
+    # lists become tuples on decode (FieldValue is tuple-based, not list)
+    assert decoded == {"a": 1, "b": {"c": (1, 2, 3), "d": None}, "e": True}
+
+
+def test_recursive_json_alias_tuple_round_trips_as_tuple() -> None:
+    t = classify(_JsonValue)
+    src = (1, "x", (2, 3))
+    decoded = t.decode(t.encode(src))
+    assert decoded == (1, "x", (2, 3))
+
+
+def test_recursive_json_alias_inside_dict_value() -> None:
+    t = classify(dict[str, _JsonValue])
+    src: dict[str, object] = {"k": [1, {"nested": "v"}]}
+    decoded = t.decode(t.encode(src))
+    assert decoded == {"k": (1, {"nested": "v"})}
+
+
+def test_recursive_json_alias_optional() -> None:
+    t = classify(_JsonValue | None)
+    assert t.is_optional
+    assert t.decode(t.encode(None)) is None
+    assert t.decode(t.encode({"a": 1})) == {"a": 1}
+
+
+def test_recursive_json_alias_from_json_coerces_lists_to_tuples() -> None:
+    t = classify(_JsonValue)
+    assert t.from_json([1, [2, 3]]) == (1, (2, 3))
+
+
+type _BadRecursive = str | int | bytes | list["_BadRecursive"]
+type _AliasedBool = bool
+
+
+def test_recursive_alias_with_non_json_arm_rejected() -> None:
+    # ``bytes`` is not in the JSON-shape allow-list; the recursive alias
+    # is rejected rather than silently accepted.
+    with pytest.raises(TypeNotSupportedError):
+        classify(_BadRecursive)
+
+
+def test_non_recursive_alias_unaffected() -> None:
+    """Plain non-recursive aliases keep the existing unwrap-and-recurse path."""
+    t = classify(_AliasedBool)
+    assert t.sort == "Bool"
+
+
+# -- recursive alias as a Model field --------------------------------------
+
+import didactic.api as dx  # noqa: E402
+
+type _Params = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | list["_Params"]
+    | tuple["_Params", ...]
+    | dict[str, "_Params"]
+)
+
+
+class _Variation(dx.Model):
+    kind: str
+    params: dict[str, _Params]
+
+
+def test_recursive_json_alias_works_as_model_field() -> None:
+    """The neume use case: ``dict[str, JsonValue]`` on a real Model."""
+    v = _Variation(
+        kind="transposition",
+        params={"semitones": 5, "tags": ["a", "b"], "meta": {"v": 1.0}},
+    )
+    raw = v.model_dump_json()
+    v2 = _Variation.model_validate_json(raw)
+    # lists round-trip as tuples (FieldValue is tuple-based).
+    assert v2.params["semitones"] == 5
+    assert v2.params["tags"] == ("a", "b")
+    assert v2.params["meta"] == {"v": 1.0}

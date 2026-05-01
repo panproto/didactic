@@ -37,6 +37,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
+from functools import reduce
 from types import EllipsisType, NoneType, UnionType
 from typing import (
     TYPE_CHECKING,
@@ -312,30 +313,226 @@ def _scalar_translation(typ: type) -> TypeTranslation:
 def _strip_optional(typ: TypeForm) -> tuple[TypeForm, bool]:
     """Peel a single ``T | None`` layer; return ``(inner, was_optional)``.
 
-    Anything beyond a binary ``T | None`` is left to the caller, which
-    will raise a TypeNotSupportedError for general unions (didactic
-    expresses sums via ``dx.TaggedUnion``, not via raw unions).
+    The returned inner may itself be a union (``int | str``); the caller
+    is responsible for classifying it via ``_classify_primitive_union``.
     """
     origin = get_origin(typ)
     if origin in {Union, UnionType}:
-        args = [a for a in get_args(typ) if a is not NoneType]
-        non_none = list(get_args(typ))
-        had_none = NoneType in non_none
-        if had_none and len(args) == 1:
-            return args[0], True
-        if had_none and len(args) > 1:
-            msg = (
-                "didactic does not yet support unions of more than one non-None "
-                f"type; got {typ!r}. Use a dx.TaggedUnion subclass."
-            )
-            raise TypeNotSupportedError(msg)
-        if not had_none:
-            msg = (
-                "didactic does not yet support raw Python unions without None; "
-                f"got {typ!r}. Use a dx.TaggedUnion subclass."
-            )
-            raise TypeNotSupportedError(msg)
+        non_none = [a for a in get_args(typ) if a is not NoneType]
+        had_none = NoneType in get_args(typ)
+        if had_none and len(non_none) == 1:
+            return non_none[0], True
+        if had_none and len(non_none) > 1:
+            # rebuild the union without None via PEP 604 ``|``; the
+            # ``X | Y`` operator is the only PEP-604-compliant way to
+            # construct a ``UnionType`` from a runtime sequence. The
+            # local lambda avoids ``operator.or_``'s partially-typed
+            # typeshed stub.
+            def _union(a: TypeForm, b: TypeForm) -> TypeForm:
+                return cast("TypeForm", a | b)
+
+            return reduce(_union, non_none), True
     return typ, False
+
+
+# ---------------------------------------------------------------------------
+# Union of primitive scalars
+# ---------------------------------------------------------------------------
+
+
+def _classify_primitive_union(args: tuple[TypeForm, ...]) -> TypeTranslation:
+    """Classify a union whose every arm is a registered scalar.
+
+    The encoded form is a JSON literal (``42``, ``"hello"``, ``1.5``); the
+    decoder uses ``json.loads`` and dispatches on the resulting Python
+    type. The synthesised sort name lists each arm's panproto sort in a
+    canonical order so that equivalent unions produce the same sort.
+    """
+    arms: list[type] = []
+    for arm in args:
+        if not (isinstance(arm, type) and arm in _SCALARS):
+            msg = (
+                "didactic supports unions only when every arm is a registered "
+                f"scalar; got arm {arm!r} in union {args!r}. Use a "
+                "dx.TaggedUnion subclass for richer sums."
+            )
+            raise TypeNotSupportedError(msg)
+        arms.append(arm)
+
+    # canonical order: by sort name, deduplicated. Preserves runtime
+    # behaviour while making ``int | str`` and ``str | int`` agree.
+    arms_by_sort = {_SCALARS[a][0]: a for a in arms}
+    sorted_sorts = sorted(arms_by_sort)
+    sort = "Union " + " ".join(_paren(s) for s in sorted_sorts)
+
+    def enc(v: FieldValue) -> Encoded:
+        # bool is an int subclass; check it first so ``True`` doesn't
+        # decode as ``1`` on the int arm.
+        for arm in (bool, *(a for a in arms if a is not bool)):
+            if arm in arms_by_sort.values() and isinstance(v, arm):
+                return json.dumps(v if not isinstance(v, bytes) else v.hex())
+        msg = f"value {v!r} did not match any arm of union {arms!r}"
+        raise TypeError(msg)
+
+    def dec(s: Encoded) -> FieldValue:
+        loaded = json.loads(s)
+        return _dispatch_union_arm(loaded, arms_by_sort)
+
+    def from_json(value: JsonValue) -> FieldValue:
+        return _dispatch_union_arm(value, arms_by_sort)
+
+    return TypeTranslation(
+        sort=sort,
+        encode=enc,
+        decode=dec,
+        inner_kind="scalar",
+        from_json=from_json,
+    )
+
+
+def _dispatch_union_arm(value: JsonValue, arms_by_sort: dict[str, type]) -> FieldValue:
+    """Pick the union arm whose Python type matches ``value`` and decode."""
+    arms = list(arms_by_sort.values())
+    # bool first (subclass of int)
+    if bool in arms and isinstance(value, bool):
+        return value
+    for arm in arms:
+        if arm is bool:
+            continue
+        if isinstance(value, arm):
+            # the matched scalar arm is a subset of FieldValue; the
+            # union narrowing on ``value`` keeps it as JsonValue so we
+            # cast at the boundary.
+            return cast("FieldValue", value)
+    msg = (
+        f"value {value!r} (type {type(value).__name__}) did not match any "
+        f"arm of union {arms!r}"
+    )
+    raise TypeError(msg)
+
+
+# ---------------------------------------------------------------------------
+# Recursive JSON-shaped type aliases
+# ---------------------------------------------------------------------------
+
+# A "JSON-shaped" recursive type alias is one whose ``__value__`` is built
+# entirely from primitive scalars (str/int/float/bool/None), the
+# JSON-compatible containers ``list[X]``/``tuple[X, ...]``/``dict[str, X]``,
+# unions of these, and self-references (which appear as bare strings inside
+# the alias body, e.g. ``list["JsonValue"]``). The motivating shape is::
+#
+#     type JsonValue = (
+#         str | int | float | bool | None
+#         | list["JsonValue"] | tuple["JsonValue", ...]
+#         | dict[str, "JsonValue"]
+#     )
+#
+# Such aliases are treated as opaque values of a single panproto sort
+# named after the alias (``"JsonValue"`` in the example above). The
+# encoded form is a JSON literal; the decoder is ``json.loads`` plus a
+# recursive ``list -> tuple`` coercion so the result satisfies didactic's
+# tuple-based ``FieldValue`` type. Recursive aliases that are NOT
+# JSON-shaped (e.g. one that admits ``bytes`` or a non-Model class) are
+# rejected with a clear error rather than silently accepted.
+
+_JSON_PRIMITIVE_TYPES: frozenset[type] = frozenset({str, int, float, bool, NoneType})
+
+
+def _arm_is_json_shape(arm: object, alias_name: str, alias_id: int, depth: int) -> bool:
+    """Return True iff ``arm`` is a JSON-shaped type expression.
+
+    Uses ``alias_name`` to recognise self-reference forward strings, and
+    ``alias_id`` to recognise self-reference via ``TypeAliasType``
+    identity. ``depth`` bounds recursion to guard against pathological
+    nesting (e.g. mutual recursion not yet supported).
+    """
+    if depth > 64:
+        return False
+    if isinstance(arm, type) and arm in _JSON_PRIMITIVE_TYPES:
+        return True
+    if isinstance(arm, str) and arm == alias_name:
+        return True
+    if isinstance(arm, TypeAliasType) and id(arm) == alias_id:
+        return True
+    origin = get_origin(arm)
+    args = get_args(arm)
+    if origin is list:
+        return len(args) == 1 and _arm_is_json_shape(
+            args[0], alias_name, alias_id, depth + 1
+        )
+    if origin is tuple:
+        return (
+            len(args) == 2
+            and args[1] is Ellipsis
+            and _arm_is_json_shape(args[0], alias_name, alias_id, depth + 1)
+        )
+    if origin is dict:
+        return (
+            len(args) == 2
+            and args[0] is str
+            and _arm_is_json_shape(args[1], alias_name, alias_id, depth + 1)
+        )
+    if origin in {Union, UnionType}:
+        return all(_arm_is_json_shape(a, alias_name, alias_id, depth + 1) for a in args)
+    return False
+
+
+def _has_self_reference(typ: object, alias_name: str, alias_id: int) -> bool:
+    """Return True iff ``typ``'s structure references the alias by name or identity."""
+    if isinstance(typ, str) and typ == alias_name:
+        return True
+    if isinstance(typ, TypeAliasType) and id(typ) == alias_id:
+        return True
+    args = get_args(typ)
+    return any(
+        a is not Ellipsis and _has_self_reference(a, alias_name, alias_id) for a in args
+    )
+
+
+def _coerce_lists_to_tuples(v: JsonValue) -> FieldValue:
+    """Walk a JSON-decoded value, converting every ``list`` to ``tuple``.
+
+    didactic's ``FieldValue`` is a tuple-based recursive type (no mutable
+    ``list``); JSON-decode produces lists. This coercion bridges the two
+    so that values flowing out of the JSON-shaped translation satisfy
+    ``FieldValue`` immutability.
+    """
+    if isinstance(v, list):
+        return tuple(_coerce_lists_to_tuples(item) for item in v)
+    if isinstance(v, dict):
+        return {k: _coerce_lists_to_tuples(val) for k, val in v.items()}
+    # primitives pass through; bool/int/float/str/None are FieldValue leaves.
+    return cast("FieldValue", v)
+
+
+def _json_alias_translation(alias_name: str) -> TypeTranslation:
+    """Build a TypeTranslation for a JSON-shaped recursive alias.
+
+    The encoded form is ``json.dumps(value)`` (which natively converts
+    tuples to JSON arrays). Decoding parses the JSON and coerces any
+    decoded lists to tuples. ``from_json`` performs the same coercion
+    on values that have already been JSON-decoded by an outer layer.
+    """
+
+    def enc(v: FieldValue) -> Encoded:
+        # ``json.dumps`` raises ``TypeError`` for non-JSON-shaped values
+        # (bytes, Decimal, Model instances, etc.). That's the right
+        # behaviour: the alias declared the value space.
+        return json.dumps(v)
+
+    def dec(s: Encoded) -> FieldValue:
+        return _coerce_lists_to_tuples(json.loads(s))
+
+    def from_json(v: JsonValue) -> FieldValue:
+        return _coerce_lists_to_tuples(v)
+
+    return TypeTranslation(
+        sort=alias_name,
+        encode=enc,
+        decode=dec,
+        inner_kind="scalar",
+        from_json=from_json,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -346,17 +543,47 @@ def _strip_optional(typ: TypeForm) -> tuple[TypeForm, bool]:
 def _expand_type_alias(typ: TypeForm) -> TypeForm:
     """Substitute concrete arguments through a PEP 695 type alias.
 
-    Given ``Foo[X, Y]`` where ``Foo`` is a ``TypeAliasType`` such as
-    ``type Foo[T, U] = Annotated[T, ..., U]``, return the alias's
-    ``__value__`` with each ``TypeVar`` replaced by the matching
-    argument. The didactic ``Embed`` and ``Ref`` aliases are the only
-    in-tree producers of this shape; non-alias inputs pass through
-    unchanged.
+    Three shapes are recognised:
+
+    1. ``Foo[X, Y]`` where ``Foo`` is a ``TypeAliasType`` such as
+       ``type Foo[T, U] = Annotated[T, ..., U]``. Returns the alias's
+       ``__value__`` with each ``TypeVar`` replaced by the matching
+       argument. The didactic ``Embed`` and ``Ref`` aliases are the
+       only in-tree producers of this shape.
+    2. A bare non-recursive ``TypeAliasType`` such as
+       ``type Kind = Literal["a","b"]``. Returns the alias's
+       ``__value__`` directly.
+    3. A recursive JSON-shaped ``TypeAliasType`` such as the canonical
+       ``JsonValue``. Returns the alias *unchanged* so that ``classify``
+       can build a ``_json_alias_translation`` for it. (Unwrapping a
+       recursive alias would loop on the self-reference.)
 
     Substitution walks one level of ``Annotated[...]`` and replaces type
     variables that appear either as the base type or anywhere in the
     metadata tuple. Other type-alias shapes are out of scope.
     """
+    # bare alias: ``type Kind = Literal[...]``. ``TypeAliasType`` falls
+    # outside the static ``TypeForm`` union (which only covers nominal
+    # ``type`` and ``UnionType``), so the isinstance check needs an
+    # ``object`` view of ``typ``.
+    if isinstance(cast("object", typ), TypeAliasType):
+        alias = cast("TypeAliasType", typ)
+        # recursive alias: leave unwrapped so classify can build the
+        # JSON-fixpoint translation. Reject recursive aliases that are
+        # not JSON-shaped early, with a clear message.
+        if _has_self_reference(alias.__value__, alias.__name__, id(alias)):
+            if not _arm_is_json_shape(alias.__value__, alias.__name__, id(alias), 0):
+                msg = (
+                    f"recursive type alias {alias.__name__!r} contains an arm "
+                    "that is not JSON-shaped (allowed: primitive scalars, "
+                    "list[X], tuple[X, ...], dict[str, X], unions of these, "
+                    "and self-references). Restrict the alias to the "
+                    "JSON-compatible subset, or use a dx.TaggedUnion."
+                )
+                raise TypeNotSupportedError(msg)
+            return cast("TypeForm", alias)
+        return cast("TypeForm", alias.__value__)
+    # parameterised alias: ``Foo[X, Y]``
     origin = get_origin(typ)
     if not isinstance(origin, TypeAliasType):
         return typ
@@ -590,7 +817,7 @@ def _classify_literal(args: tuple[FieldValue, ...]) -> TypeTranslation:
 # ---------------------------------------------------------------------------
 
 
-def classify(typ: TypeForm) -> TypeTranslation:  # noqa: PLR0911
+def classify(typ: TypeForm) -> TypeTranslation:
     """Classify a Python type hint and return a TypeTranslation.
 
     Parameters
@@ -614,8 +841,16 @@ def classify(typ: TypeForm) -> TypeTranslation:  # noqa: PLR0911
     unwrap_annotated : split Annotated metadata before calling classify.
     """
     # Expand PEP 695 type aliases (``Embed[T]``, ``Ref[T]``) so the
-    # downstream Annotated logic sees the underlying form.
+    # downstream Annotated logic sees the underlying form. Recursive
+    # JSON-shaped aliases come back unwrapped; we detect them here and
+    # build the JSON-fixpoint translation directly.
     typ = _expand_type_alias(typ)
+    if isinstance(cast("object", typ), TypeAliasType):
+        alias = cast("TypeAliasType", typ)
+        # _expand_type_alias only returns a ``TypeAliasType`` when it has
+        # already validated that the alias is a JSON-shaped recursive
+        # alias (otherwise it unwraps or raises).
+        return _json_alias_translation(alias.__name__)
     # Annotated[T, ...]; strip metadata, recurse on the base
     if get_origin(typ) is Annotated:
         base, metadata = unwrap_annotated(typ)
@@ -668,6 +903,11 @@ def classify(typ: TypeForm) -> TypeTranslation:  # noqa: PLR0911
     # parameterised generics
     origin = get_origin(inner_type)
     args = get_args(inner_type)
+
+    # union of primitive scalars (e.g. ``int | str``); raw unions of
+    # non-primitives still raise via _classify_primitive_union below.
+    if origin in {Union, UnionType}:
+        return _classify_primitive_union(args)
 
     if origin is tuple:
         return _classify_tuple(args)

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-01
+
+### Added
+
+- Bare PEP 695 type aliases now translate transparently. `type Kind =
+  Literal["a", "b", "c"]` is accepted as a Model field annotation; the
+  classifier unwraps the alias before dispatching. ([#2])
+- Union of primitive scalars is a translatable field type. `int | str`,
+  `float | str`, `int | float | str`, and the same unions inside
+  `dict[str, V]` and `T | None` are accepted. The synthesised
+  panproto sort name is `"Union <a> <b> ..."` in canonical order; the
+  encoder JSON-encodes the value, and the decoder dispatches on the
+  resulting Python type. ([#2], [#3])
+- JSON-shaped recursive type aliases translate to a single opaque
+  panproto sort named after the alias. The motivating shape is the
+  canonical `JsonValue` alias (`str | int | float | bool | None |
+  list[X] | tuple[X, ...] | dict[str, X]` with `X` self-referential).
+  The encoded form is `json.dumps(value)`; the decoder parses and
+  recursively coerces lists to tuples to satisfy didactic's
+  tuple-based `FieldValue` type. Recursive aliases that are *not*
+  JSON-shaped (e.g. one admitting `bytes`) raise
+  `TypeNotSupportedError` with a clear message rather than failing
+  silently. ([#2])
+
+[#2]: https://github.com/panproto/didactic/issues/2
+[#3]: https://github.com/panproto/didactic/issues/3
+
 ## [0.1.0] - 2026-05-01
 
 ### Added
