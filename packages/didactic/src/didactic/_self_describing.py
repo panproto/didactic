@@ -36,7 +36,7 @@ didactic.migrations._fingerprint.structural_fingerprint : the underlying address
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from didactic.models._model import Model
@@ -67,7 +67,7 @@ def schema_uri(cls: type[Model]) -> str:
 
 
 def embed_schema_uri(instance: Model) -> JsonObject:
-    """Return ``instance.model_dump()`` with a ``$schema`` URI prepended.
+    """Return the JSON-shape dump of ``instance`` with a ``$schema`` URI prepended.
 
     Parameters
     ----------
@@ -77,16 +77,23 @@ def embed_schema_uri(instance: Model) -> JsonObject:
     Returns
     -------
     dict
-        The dump dict, with ``"$schema"`` set to the Model's
+        The JSON-safe dump dict, with ``"$schema"`` set to the Model's
         canonical URI as the first key.
 
     Notes
     -----
+    Routes through ``model_dump_json`` (not the bare ``model_dump``)
+    so any nested ``tuple[Embed[T], ...]`` or ``dict[str, Embed[T]]``
+    fields get the JSON-safe walk; the returned dict is always
+    serialisable with ``json.dumps``.
+
     A consumer that knows how to resolve ``didactic://v1/<fp>`` URIs
     can fetch the Theory by fingerprint and validate the payload
     without knowing the original Python class.
     """
-    payload = instance.model_dump()
+    import json  # noqa: PLC0415
+
+    payload = cast("JsonObject", json.loads(instance.model_dump_json()))
     return {"$schema": schema_uri(type(instance)), **payload}
 
 

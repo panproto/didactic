@@ -52,7 +52,7 @@ from typing import (
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from didactic.models._model import Model
     from didactic.types._typing import Encoded, FieldValue, JsonValue, Opaque
@@ -947,17 +947,34 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
             return {primitive_tag_by_type[float]: value}
         for cls, tag in model_tag_by_class.items():
             if isinstance(value, cls):
-                # Model.model_dump returns the canonical record dict;
-                # the constructor payload IS that dict, no envelope.
+                # Route through ``model_dump_json`` so any nested
+                # ``tuple[Embed[T], ...]`` / ``dict[str, Embed[T]]`` /
+                # nested-Model structures inside the variant get the
+                # JSON-safe walk that ``model_dump`` alone skips.
                 model_value = cast("Model", value)
-                return {tag: cast("JsonValue", model_value.model_dump())}
-        if isinstance(value, tuple) and sig.has_tuple:
-            tup = cast("tuple[FieldValue, ...]", value)
-            inner: list[JsonValue] = [encode_one(item, seen) for item in tup]
+                return cast(
+                    "JsonValue", {tag: json.loads(model_value.model_dump_json())}
+                )
+        # Sequence values: prefer the ``tuple`` constructor when the
+        # alias declares one, even for Python ``list`` input. This
+        # keeps storage canonical (round-tripping a Python list and
+        # re-encoding produces the same constructor name as if it had
+        # been a tuple to begin with), matching the tuple-based
+        # ``FieldValue`` invariant.
+        if isinstance(value, (tuple, list)) and sig.has_tuple:
+            seq = cast("tuple[FieldValue, ...] | list[FieldValue]", value)
+            inner: list[JsonValue] = [encode_one(item, seen) for item in seq]
             return {f"{alias_name}_tuple": inner}
         if isinstance(value, list) and sig.has_list:
             lst = cast("list[FieldValue]", value)
             inner = [encode_one(item, seen) for item in lst]
+            return {f"{alias_name}_list": inner}
+        if isinstance(value, tuple) and sig.has_list:
+            # Alias declares only ``list[X]`` but the user constructed
+            # with a tuple: route through the list constructor so the
+            # alias's declared constructor space is honoured.
+            tup_for_list = cast("tuple[FieldValue, ...]", value)
+            inner = [encode_one(item, seen) for item in tup_for_list]
             return {f"{alias_name}_list": inner}
         if isinstance(value, dict) and sig.has_dict:
             mapping = cast("dict[str, FieldValue]", value)
@@ -996,10 +1013,12 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
             if target in _JSON_PRIMITIVE_TYPES:
                 # primitive arm; payload is the literal value
                 return cast("FieldValue", body)
-            # Model arm; ``target`` came from the alias's collected
-            # Model classes so it's known to expose ``model_validate``.
+            # Model arm; route through ``model_validate_json`` so the
+            # variant's per-field ``from_json`` callables run (e.g.
+            # list -> tuple coercion for nested ``tuple[T, ...]`` fields,
+            # ISO-string -> datetime for nested datetime fields).
             model_cls = cast("type[Model]", target)
-            return model_cls.model_validate(cast("Mapping[str, JsonValue]", body))
+            return model_cls.model_validate_json(json.dumps(body))
         # container arm; body is a JSON list/dict of inner-encoded values
         if target in {"list", "tuple"}:
             if not isinstance(body, list):
@@ -1089,7 +1108,11 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
     def encode_one(value: object) -> JsonValue:
         for variant_cls in variants_by_value.values():
             if isinstance(value, variant_cls):
-                return cast("JsonValue", value.model_dump())
+                # Route through ``model_dump_json`` so any nested
+                # ``tuple[Embed[T], ...]`` / ``dict[str, Embed[T]]`` /
+                # nested-Model fields inside the variant get the
+                # JSON-safe walk that ``model_dump`` alone skips.
+                return cast("JsonValue", json.loads(value.model_dump_json()))
         variant_names = sorted(v.__name__ for v in variants_by_value.values())
         msg = (
             f"value of type {type(value).__name__} is not a registered variant "
@@ -1734,13 +1757,17 @@ def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTran
     target_name = target_cls.__name__
 
     def encode(v: FieldValue) -> Encoded:
-        # accept either a target_cls instance or a dict (which we route
-        # through model_validate to produce one). This makes the
-        # model_dump -> model_validate round-trip work transparently.
+        # accept either a target_cls instance or a dict. The dict path
+        # goes through ``model_validate_json`` (not ``model_validate``)
+        # so each per-field ``from_json`` runs and JSON-shape values
+        # like ``[1, 2, 3]`` for a ``tuple[int, ...]`` field get the
+        # list-to-tuple coercion before the field encoder asserts.
         if isinstance(v, target_cls):
             return json.dumps(v.to_storage_dict())
         if isinstance(v, dict):
-            return json.dumps(target_cls.model_validate(v).to_storage_dict())
+            return json.dumps(
+                target_cls.model_validate_json(json.dumps(v)).to_storage_dict()
+            )
         msg = (
             f"Embed[{target_name}] expected a {target_name} instance or dict; "
             f"got {type(v).__name__}"
@@ -1758,10 +1785,12 @@ def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTran
         return target_cls.from_storage_dict(items)
 
     def from_json(v: JsonValue) -> FieldValue:
-        # the JSON form is the model_dump dict (decoded values), not the
-        # storage dict; route through model_validate to re-encode.
+        # the JSON form is the model_dump dict (decoded values), not
+        # the storage dict; route through ``model_validate_json`` so
+        # the inner Model's per-field ``from_json`` runs (e.g. JSON
+        # list -> tuple for nested ``tuple[T, ...]`` fields).
         if isinstance(v, dict):
-            return target_cls.model_validate(v)
+            return target_cls.model_validate_json(json.dumps(v))
         msg = f"expected JSON object for Embed[{target_name}]; got {type(v).__name__}"
         raise TypeError(msg)
 

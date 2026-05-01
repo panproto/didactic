@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-01
+
+### Fixed
+
+- Sum-sort encoders (closed Model-ref recursive aliases and TaggedUnion
+  field types) now route the chosen variant through ``model_dump_json``
+  instead of bare ``model_dump``, so any nested
+  ``tuple[Embed[T], ...]`` / ``dict[str, Embed[T]]`` / arbitrary
+  Model-containing structure inside the variant gets the JSON-safe
+  walk. Previously such payloads raised
+  ``Object of type X is not JSON serializable`` from ``json.dumps``.
+  ([#7])
+- ``Embed[Inner]`` round-trip via ``model_dump_json`` /
+  ``model_validate_json`` no longer asserts when ``Inner`` has a
+  ``tuple[T, ...]`` (or any ``from_json``-coerced) field. The embed
+  translation now routes inner JSON payloads through
+  ``model_validate_json`` so per-field ``from_json`` runs at every
+  level (e.g. JSON list to tuple coercion). ([#8])
+- ``model_dump`` evaluates ``inner_kind == "sum"`` before the
+  ``isinstance(value, Model)`` branch, so a Model variant of a
+  sum-sort field is dumped with its constructor tag instead of
+  collapsing to the variant's record dict. Previously a recursive
+  alias whose Model arm was the current value lost its dispatch
+  info on the dump side; the JSON round-trip then raised
+  ``unknown constructor`` on decode.
+- ``embed_schema_uri`` walks nested Model-containing fields via
+  ``model_dump_json`` so the returned dict is always serialisable;
+  previously failed with ``TypeError`` when the source instance had
+  a ``tuple[Embed[T], ...]`` field.
+
+### Changed
+
+- Recursive Model-ref alias encoders prefer the ``tuple`` constructor
+  over the ``list`` constructor when both arms are declared, even for
+  Python ``list`` input. This keeps the encoded storage form
+  canonical: round-tripping a Python list and re-encoding produces
+  the same constructor name and the same storage string, restoring
+  ``Model`` equality across the round-trip.
+
+[#7]: https://github.com/panproto/didactic/issues/7
+[#8]: https://github.com/panproto/didactic/issues/8
+
 ## [0.3.0] - 2026-05-01
 
 ### Added
