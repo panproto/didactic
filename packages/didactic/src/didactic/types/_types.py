@@ -412,6 +412,130 @@ def _dispatch_union_arm(value: JsonValue, arms_by_sort: dict[str, type]) -> Fiel
 
 
 # ---------------------------------------------------------------------------
+# Recursive JSON-shaped type aliases
+# ---------------------------------------------------------------------------
+
+# A "JSON-shaped" recursive type alias is one whose ``__value__`` is built
+# entirely from primitive scalars (str/int/float/bool/None), the
+# JSON-compatible containers ``list[X]``/``tuple[X, ...]``/``dict[str, X]``,
+# unions of these, and self-references (which appear as bare strings inside
+# the alias body, e.g. ``list["JsonValue"]``). The motivating shape is::
+#
+#     type JsonValue = (
+#         str | int | float | bool | None
+#         | list["JsonValue"] | tuple["JsonValue", ...]
+#         | dict[str, "JsonValue"]
+#     )
+#
+# Such aliases are treated as opaque values of a single panproto sort
+# named after the alias (``"JsonValue"`` in the example above). The
+# encoded form is a JSON literal; the decoder is ``json.loads`` plus a
+# recursive ``list -> tuple`` coercion so the result satisfies didactic's
+# tuple-based ``FieldValue`` type. Recursive aliases that are NOT
+# JSON-shaped (e.g. one that admits ``bytes`` or a non-Model class) are
+# rejected with a clear error rather than silently accepted.
+
+_JSON_PRIMITIVE_TYPES: frozenset[type] = frozenset({str, int, float, bool, NoneType})
+
+
+def _arm_is_json_shape(arm: object, alias_name: str, alias_id: int, depth: int) -> bool:
+    """Return True iff ``arm`` is a JSON-shaped type expression.
+
+    Uses ``alias_name`` to recognise self-reference forward strings, and
+    ``alias_id`` to recognise self-reference via ``TypeAliasType``
+    identity. ``depth`` bounds recursion to guard against pathological
+    nesting (e.g. mutual recursion not yet supported).
+    """
+    if depth > 64:
+        return False
+    if isinstance(arm, type) and arm in _JSON_PRIMITIVE_TYPES:
+        return True
+    if isinstance(arm, str) and arm == alias_name:
+        return True
+    if isinstance(arm, TypeAliasType) and id(arm) == alias_id:
+        return True
+    origin = get_origin(arm)
+    args = get_args(arm)
+    if origin is list:
+        return len(args) == 1 and _arm_is_json_shape(
+            args[0], alias_name, alias_id, depth + 1
+        )
+    if origin is tuple:
+        return (
+            len(args) == 2
+            and args[1] is Ellipsis
+            and _arm_is_json_shape(args[0], alias_name, alias_id, depth + 1)
+        )
+    if origin is dict:
+        return (
+            len(args) == 2
+            and args[0] is str
+            and _arm_is_json_shape(args[1], alias_name, alias_id, depth + 1)
+        )
+    if origin in {Union, UnionType}:
+        return all(_arm_is_json_shape(a, alias_name, alias_id, depth + 1) for a in args)
+    return False
+
+
+def _has_self_reference(typ: object, alias_name: str, alias_id: int) -> bool:
+    """Return True iff ``typ``'s structure references the alias by name or identity."""
+    if isinstance(typ, str) and typ == alias_name:
+        return True
+    if isinstance(typ, TypeAliasType) and id(typ) == alias_id:
+        return True
+    args = get_args(typ)
+    return any(
+        a is not Ellipsis and _has_self_reference(a, alias_name, alias_id) for a in args
+    )
+
+
+def _coerce_lists_to_tuples(v: JsonValue) -> FieldValue:
+    """Walk a JSON-decoded value, converting every ``list`` to ``tuple``.
+
+    didactic's ``FieldValue`` is a tuple-based recursive type (no mutable
+    ``list``); JSON-decode produces lists. This coercion bridges the two
+    so that values flowing out of the JSON-shaped translation satisfy
+    ``FieldValue`` immutability.
+    """
+    if isinstance(v, list):
+        return tuple(_coerce_lists_to_tuples(item) for item in v)
+    if isinstance(v, dict):
+        return {k: _coerce_lists_to_tuples(val) for k, val in v.items()}
+    # primitives pass through; bool/int/float/str/None are FieldValue leaves.
+    return cast("FieldValue", v)
+
+
+def _json_alias_translation(alias_name: str) -> TypeTranslation:
+    """Build a TypeTranslation for a JSON-shaped recursive alias.
+
+    The encoded form is ``json.dumps(value)`` (which natively converts
+    tuples to JSON arrays). Decoding parses the JSON and coerces any
+    decoded lists to tuples. ``from_json`` performs the same coercion
+    on values that have already been JSON-decoded by an outer layer.
+    """
+
+    def enc(v: FieldValue) -> Encoded:
+        # ``json.dumps`` raises ``TypeError`` for non-JSON-shaped values
+        # (bytes, Decimal, Model instances, etc.). That's the right
+        # behaviour: the alias declared the value space.
+        return json.dumps(v)
+
+    def dec(s: Encoded) -> FieldValue:
+        return _coerce_lists_to_tuples(json.loads(s))
+
+    def from_json(v: JsonValue) -> FieldValue:
+        return _coerce_lists_to_tuples(v)
+
+    return TypeTranslation(
+        sort=alias_name,
+        encode=enc,
+        decode=dec,
+        inner_kind="scalar",
+        from_json=from_json,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Annotated handling
 # ---------------------------------------------------------------------------
 
@@ -419,15 +543,20 @@ def _dispatch_union_arm(value: JsonValue, arms_by_sort: dict[str, type]) -> Fiel
 def _expand_type_alias(typ: TypeForm) -> TypeForm:
     """Substitute concrete arguments through a PEP 695 type alias.
 
-    Two shapes are recognised:
+    Three shapes are recognised:
 
     1. ``Foo[X, Y]`` where ``Foo`` is a ``TypeAliasType`` such as
        ``type Foo[T, U] = Annotated[T, ..., U]``. Returns the alias's
        ``__value__`` with each ``TypeVar`` replaced by the matching
        argument. The didactic ``Embed`` and ``Ref`` aliases are the
        only in-tree producers of this shape.
-    2. A bare ``TypeAliasType`` such as ``type Kind = Literal["a","b"]``.
-       Returns the alias's ``__value__`` directly.
+    2. A bare non-recursive ``TypeAliasType`` such as
+       ``type Kind = Literal["a","b"]``. Returns the alias's
+       ``__value__`` directly.
+    3. A recursive JSON-shaped ``TypeAliasType`` such as the canonical
+       ``JsonValue``. Returns the alias *unchanged* so that ``classify``
+       can build a ``_json_alias_translation`` for it. (Unwrapping a
+       recursive alias would loop on the self-reference.)
 
     Substitution walks one level of ``Annotated[...]`` and replaces type
     variables that appear either as the base type or anywhere in the
@@ -439,6 +568,20 @@ def _expand_type_alias(typ: TypeForm) -> TypeForm:
     # ``object`` view of ``typ``.
     if isinstance(cast("object", typ), TypeAliasType):
         alias = cast("TypeAliasType", typ)
+        # recursive alias: leave unwrapped so classify can build the
+        # JSON-fixpoint translation. Reject recursive aliases that are
+        # not JSON-shaped early, with a clear message.
+        if _has_self_reference(alias.__value__, alias.__name__, id(alias)):
+            if not _arm_is_json_shape(alias.__value__, alias.__name__, id(alias), 0):
+                msg = (
+                    f"recursive type alias {alias.__name__!r} contains an arm "
+                    "that is not JSON-shaped (allowed: primitive scalars, "
+                    "list[X], tuple[X, ...], dict[str, X], unions of these, "
+                    "and self-references). Restrict the alias to the "
+                    "JSON-compatible subset, or use a dx.TaggedUnion."
+                )
+                raise TypeNotSupportedError(msg)
+            return cast("TypeForm", alias)
         return cast("TypeForm", alias.__value__)
     # parameterised alias: ``Foo[X, Y]``
     origin = get_origin(typ)
@@ -674,7 +817,7 @@ def _classify_literal(args: tuple[FieldValue, ...]) -> TypeTranslation:
 # ---------------------------------------------------------------------------
 
 
-def classify(typ: TypeForm) -> TypeTranslation:  # noqa: PLR0911
+def classify(typ: TypeForm) -> TypeTranslation:
     """Classify a Python type hint and return a TypeTranslation.
 
     Parameters
@@ -698,8 +841,16 @@ def classify(typ: TypeForm) -> TypeTranslation:  # noqa: PLR0911
     unwrap_annotated : split Annotated metadata before calling classify.
     """
     # Expand PEP 695 type aliases (``Embed[T]``, ``Ref[T]``) so the
-    # downstream Annotated logic sees the underlying form.
+    # downstream Annotated logic sees the underlying form. Recursive
+    # JSON-shaped aliases come back unwrapped; we detect them here and
+    # build the JSON-fixpoint translation directly.
     typ = _expand_type_alias(typ)
+    if isinstance(cast("object", typ), TypeAliasType):
+        alias = cast("TypeAliasType", typ)
+        # _expand_type_alias only returns a ``TypeAliasType`` when it has
+        # already validated that the alias is a JSON-shaped recursive
+        # alias (otherwise it unwraps or raises).
+        return _json_alias_translation(alias.__name__)
     # Annotated[T, ...]; strip metadata, recurse on the base
     if get_origin(typ) is Annotated:
         base, metadata = unwrap_annotated(typ)

@@ -20,13 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panproto sort name is `"Union <a> <b> ..."` in canonical order; the
   encoder JSON-encodes the value, and the decoder dispatches on the
   resulting Python type. ([#2], [#3])
-
-### Notes
-
-- Recursive type aliases (e.g. a self-referential `JsonValue`) remain
-  unsupported and continue to raise `TypeNotSupportedError`. The
-  representation question (a new opaque `Json` sort vs. a tagged sum)
-  is tracked in [#2] for a later release.
+- JSON-shaped recursive type aliases translate to a single opaque
+  panproto sort named after the alias. The motivating shape is the
+  canonical `JsonValue` alias (`str | int | float | bool | None |
+  list[X] | tuple[X, ...] | dict[str, X]` with `X` self-referential).
+  The encoded form is `json.dumps(value)`; the decoder parses and
+  recursively coerces lists to tuples to satisfy didactic's
+  tuple-based `FieldValue` type. Recursive aliases that are *not*
+  JSON-shaped (e.g. one admitting `bytes`) raise
+  `TypeNotSupportedError` with a clear message rather than failing
+  silently. ([#2])
 
 [#2]: https://github.com/panproto/didactic/issues/2
 [#3]: https://github.com/panproto/didactic/issues/3

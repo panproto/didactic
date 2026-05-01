@@ -88,6 +88,10 @@ extend-ignore-names = ["A", "B", "T", "P"]
 # the json-schema emitter has a long if-elif chain matching annotated-types
 # primitives; expanding it doesn't help readability
 "**/_json_schema.py" = ["PLR0911", "PLR0912"]
+# ``_types.py`` houses the multi-shape origin dispatch (list/tuple/dict/union/
+# self-ref) for JSON-shape detection; flattening into helpers obscures the
+# table of cases.
+"**/types/_types.py" = ["PLR0911"]
 # model_dump's option matrix is genuinely n-flag and requires per-flag
 # checks; splitting into helpers would just hide the same logic
 "**/models/_model.py" = ["PLR0912"]
