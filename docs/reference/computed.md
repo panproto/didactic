@@ -1,0 +1,3 @@
+# Computed
+
+::: didactic.api.computed

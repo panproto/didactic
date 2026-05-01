@@ -1,0 +1,3 @@
+# Derived
+
+::: didactic.api.derived

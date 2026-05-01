@@ -1,0 +1,3 @@
+# Repository
+
+::: didactic.api.Repository
