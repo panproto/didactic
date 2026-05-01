@@ -1,0 +1,126 @@
+name: Release
+
+# Build and publish all four workspace distributions to PyPI on tag push.
+#
+# Triggers:
+#   - push to a tag matching `v*` (e.g. `v0.1.0`, `v1.0.0rc1`)
+#
+# Authentication uses PyPI Trusted Publishing (OIDC). Each PyPI project
+# (didactic, didactic-pydantic, didactic-settings, didactic-fastapi) must
+# be configured to trust this workflow on PyPI's "Manage > Publishing"
+# page with the values:
+#
+#   PyPI project name : <package>
+#   Owner             : panproto
+#   Repository        : didactic
+#   Workflow          : release.yml
+#   Environment       : pypi
+#
+# No PyPI tokens are stored in this repo.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: install python
+        run: uv python install 3.14
+
+      - name: sync workspace
+        run: uv sync --all-packages --all-extras
+
+      - name: ruff format check
+        run: uv run ruff format --check
+
+      - name: ruff lint
+        run: uv run ruff check
+
+      - name: pyright (strict)
+        run: uv run pyright
+
+      - name: pytest
+        run: uv run pytest -ra
+
+      - name: docs build (strict)
+        run: uv run mkdocs build --strict
+
+  build:
+    name: build (${{ matrix.package }})
+    needs: verify
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - didactic
+          - didactic-pydantic
+          - didactic-settings
+          - didactic-fastapi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: install python
+        run: uv python install 3.14
+
+      - name: build sdist and wheel
+        run: uv build --package ${{ matrix.package }} --out-dir dist
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.package }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish (${{ matrix.package }})
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        package:
+          - didactic
+          - didactic-pydantic
+          - didactic-settings
+          - didactic-fastapi
+    environment:
+      name: pypi
+      url: https://pypi.org/p/${{ matrix.package }}
+    permissions:
+      id-token: write
+    steps:
+      - name: download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ matrix.package }}
+          path: dist/
+
+      - name: publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          attestations: true

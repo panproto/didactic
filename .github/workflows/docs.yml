@@ -1,0 +1,58 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# allow only one concurrent deployment; cancel queued deployments rather
+# than running them sequentially. in-progress deployments are NOT cancelled
+# so a half-published site does not result.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: install python
+        run: uv python install 3.14
+
+      - name: sync workspace
+        run: uv sync --all-packages --all-extras
+
+      - name: build site (strict)
+        run: uv run mkdocs build --strict --site-dir site
+
+      - name: configure pages
+        uses: actions/configure-pages@v5
+
+      - name: upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
