@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "didactic-settings"
-version = "0.2.0"
+version = "0.3.0"
 description = "Typed application settings on top of didactic Models."
 readme = "README.md"
 requires-python = ">=3.14"

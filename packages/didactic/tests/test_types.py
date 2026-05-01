@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 from uuid import UUID
 
 import pytest
@@ -210,7 +210,7 @@ def test_nested_dict_of_optional() -> None:
     assert decoded == src
 
 
-# -- PEP 695 type aliases (gh #2.1) ----------------------------------------
+# -- PEP 695 type aliases --------------------------------------------------
 
 type _AliasedKind = Literal["a", "b", "c"]
 type _AliasedInt = int
@@ -235,7 +235,7 @@ def test_pep695_alias_inside_dict_translates() -> None:
     assert t.decode(t.encode(src)) == src
 
 
-# -- union of primitives (gh #3, #2.3) -------------------------------------
+# -- union of primitives ---------------------------------------------------
 
 
 def test_union_int_str_translates() -> None:
@@ -274,7 +274,7 @@ def test_union_of_non_primitives_still_rejected() -> None:
         classify(int | _M)
 
 
-# -- recursive JSON-shaped type aliases (gh #2.2) --------------------------
+# -- recursive JSON-shaped type aliases ------------------------------------
 
 type _JsonValue = (
     str
@@ -484,15 +484,10 @@ def test_model_ref_alias_constructor_tag_format() -> None:
 
     t = classify(_Component)
     # Model variant
-    raw = _json.loads(t.encode(_Heading(text="X", level=3)))
-    assert isinstance(raw, dict)
-    assert len(raw) == 1
-    (tag,) = raw.keys()
-    assert tag == "_Component_heading"
-    assert raw[tag] == {"text": "X", "level": 3}
+    raw_obj = _json.loads(t.encode(_Heading(text="X", level=3)))
+    assert raw_obj == {"_Component_heading": {"text": "X", "level": 3}}
     # primitive variant
-    raw = _json.loads(t.encode(42))
-    assert raw == {"_Component_int": 42}
+    assert _json.loads(t.encode(42)) == {"_Component_int": 42}
 
 
 def test_model_ref_alias_rejects_unknown_constructor() -> None:
@@ -505,14 +500,15 @@ def test_model_ref_alias_rejects_unknown_constructor() -> None:
         t.decode(bogus)
 
 
+class _Plain:
+    """Non-Model class used to test the negative-rejection path."""
+
+
+type _BadAlias = str | _Plain | list["_BadAlias"]
+
+
 def test_model_ref_alias_rejects_non_model_class_arm() -> None:
     """A recursive alias with a plain (non-Model) class arm is rejected."""
-
-    class _Plain:
-        pass
-
-    type _BadAlias = str | _Plain | list["_BadAlias"]
-
     with pytest.raises(TypeNotSupportedError):
         classify(_BadAlias)
 
@@ -551,3 +547,82 @@ def test_model_ref_alias_works_as_model_field() -> None:
         _Paragraph(text="This is the overview."),
         {"meta": {"version": 1}},
     )
+
+
+# -- alias contributes a closed sum sort to the parent Theory --------------
+
+
+class _DocWithComponent(dx.Model):
+    body: _Component
+
+
+def test_alias_emits_closed_sum_sort_in_parent_theory_spec() -> None:
+    """The parent Model's Theory spec contains the alias's closed sum sort."""
+    from didactic.theory._theory import build_theory_spec
+
+    spec = build_theory_spec(_DocWithComponent)
+    sorts_by_name = {cast("str", s["name"]): s for s in spec["sorts"]}
+    # alias sum sort is present
+    assert "_Component" in sorts_by_name
+    component = sorts_by_name["_Component"]
+    assert component["kind"] == "Structural"
+    closure = cast("dict[str, list[str]]", component["closure"])
+    assert "Closed" in closure
+    # constructors include one per primitive arm + one per Model arm + the
+    # container shapes the alias actually uses
+    constructors = set(closure["Closed"])
+    assert "_Component_str" in constructors
+    assert "_Component_int" in constructors
+    assert "_Component_heading" in constructors
+    assert "_Component_paragraph" in constructors
+    assert "_Component_list" in constructors
+    assert "_Component_tuple" in constructors
+    assert "_Component_dict" in constructors
+
+
+def test_alias_constructors_are_operations_returning_alias_sort() -> None:
+    """Every constructor name appears as an Op whose output is the alias sort."""
+    from didactic.theory._theory import build_theory_spec
+
+    spec = build_theory_spec(_DocWithComponent)
+    ops_by_name = {cast("str", op["name"]): op for op in spec["ops"]}
+    expected_constructors = [
+        "_Component_str",
+        "_Component_int",
+        "_Component_heading",
+        "_Component_paragraph",
+        "_Component_list",
+        "_Component_tuple",
+        "_Component_dict",
+    ]
+    for tag in expected_constructors:
+        assert tag in ops_by_name, f"missing constructor op {tag}"
+        assert ops_by_name[tag]["output"] == "_Component"
+
+
+def test_alias_field_accessor_returns_alias_sort() -> None:
+    """The field accessor for a sum-sort field outputs the alias sum sort."""
+    from didactic.theory._theory import build_theory_spec
+
+    spec = build_theory_spec(_DocWithComponent)
+    ops_by_name = {cast("str", op["name"]): op for op in spec["ops"]}
+    assert ops_by_name["body"]["output"] == "_Component"
+
+
+def test_panproto_accepts_alias_theory_spec() -> None:
+    """panproto's ``create_theory`` accepts the spec with the alias sorts.
+
+    Verifies that the closed sum sort + helper sorts + constructor ops
+    deserialise into a real ``panproto.Theory`` without error. The
+    ``Theory.sorts`` attribute is a list of sort dicts at runtime
+    (the stub claims it's a method; treat as data).
+    """
+    import panproto
+
+    from didactic.theory._theory import build_theory_spec
+
+    spec = build_theory_spec(_DocWithComponent)
+    theory = panproto.create_theory(cast("dict[str, object]", spec))
+    sort_records = cast("list[dict[str, object]]", theory.sorts)
+    sort_names = {cast("str", record["name"]) for record in sort_records}
+    assert "_Component" in sort_names
