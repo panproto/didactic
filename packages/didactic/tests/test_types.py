@@ -472,29 +472,35 @@ def test_model_ref_alias_nested_model_in_dict_in_list() -> None:
     assert decoded == ({"item": _Paragraph(text="nested")},)
 
 
-def test_model_ref_alias_envelope_format() -> None:
-    """The encoded envelope shape is documented and version-tagged."""
+def test_model_ref_alias_constructor_tag_format() -> None:
+    """The encoded value uses panproto-style constructor tags.
+
+    Each variant produces a single-key JSON object whose key is the
+    constructor name in the alias's closed sum sort, and whose value is
+    the constructor's payload. This matches the wire shape panproto
+    expects for ``Term::Case`` over a closed sort.
+    """
     import json as _json
 
     t = classify(_Component)
+    # Model variant
     raw = _json.loads(t.encode(_Heading(text="X", level=3)))
-    assert raw["$envelope"] == "v1"
-    assert isinstance(raw["$schema"], str)
-    assert raw["$value"] == {"text": "X", "level": 3}
+    assert isinstance(raw, dict)
+    assert len(raw) == 1
+    (tag,) = raw.keys()
+    assert tag == "_Component_heading"
+    assert raw[tag] == {"text": "X", "level": 3}
+    # primitive variant
+    raw = _json.loads(t.encode(42))
+    assert raw == {"_Component_int": 42}
 
 
-def test_model_ref_alias_rejects_unknown_dispatch_uri() -> None:
-    """An envelope referencing a Model not in the alias's class set fails."""
+def test_model_ref_alias_rejects_unknown_constructor() -> None:
+    """A bogus constructor tag in a payload fails decode with a clear error."""
     import json as _json
 
     t = classify(_Component)
-    bogus = _json.dumps(
-        {
-            "$envelope": "v1",
-            "$schema": "didactic://fingerprint/notavalidmodel",
-            "$value": {"x": 1},
-        }
-    )
+    bogus = _json.dumps({"not_a_constructor": {"x": 1}})
     with pytest.raises((KeyError, ValueError, TypeError)):
         t.decode(bogus)
 
