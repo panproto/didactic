@@ -159,6 +159,10 @@ documentation. The internal panproto encoding may change between
 minor releases; the structural fingerprint and the migration
 registry's on-disk format are stable across such changes.
 
+## Acknowledgments
+
+didactic was architected and implemented with substantial assistance from Claude Code.
+
 ## License
 
 Released under the [MIT License](LICENSE).
