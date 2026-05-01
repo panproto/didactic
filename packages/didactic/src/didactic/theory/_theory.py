@@ -40,7 +40,7 @@ didactic.fields._fields.FieldSpec : the per-field record consumed here.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 if TYPE_CHECKING:
     import panproto
@@ -119,7 +119,22 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
     # is its own piece of work (panproto-Expr-parser hookup).
     eqs: list[dict[str, JsonValue]] = []
 
+    # auxiliary sorts/ops contributed by translations (currently only the
+    # Model-ref recursive-alias sum-sort translation). Deduped by ``name``.
+    seen_aux_sorts: set[str] = set()
+    seen_aux_ops: set[str] = set()
+
     for fname, spec in field_specs.items():
+        for aux_sort in spec.translation.auxiliary_sorts:
+            sort_name = cast("str", aux_sort["name"])
+            if sort_name not in seen_aux_sorts:
+                seen_aux_sorts.add(sort_name)
+                sorts.append(aux_sort)
+        for aux_op in spec.translation.auxiliary_ops:
+            op_name = cast("str", aux_op["name"])
+            if op_name not in seen_aux_ops:
+                seen_aux_ops.add(op_name)
+                ops.append(aux_op)
         if spec.translation.inner_kind == "ref":
             # Ref[T] becomes a structural edge from this sort to T's sort
             target_sort = spec.translation.sort.removeprefix("Ref ").strip()
@@ -131,6 +146,12 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
             # Model's own theory carries it. The containment is structural.
             target_sort = spec.translation.sort.removeprefix("Embed ").strip()
             ops.append(_embed_accessor(fname, schema_kind, target_sort))
+            continue
+        if spec.translation.inner_kind == "sum":
+            # Model-ref recursive alias: the alias's sum sort is already
+            # in ``auxiliary_sorts`` above; the field accessor returns
+            # that sort directly (no per-field constraint sort needed).
+            ops.append(_edge_accessor(fname, schema_kind, spec.translation.sort))
             continue
         # constraint sort name follows panproto convention: ParentSort_field
         constraint_sort_name = f"{schema_kind}_{fname}"

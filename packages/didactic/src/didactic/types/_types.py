@@ -52,16 +52,22 @@ from typing import (
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
+    from didactic.models._model import Model
     from didactic.types._typing import Encoded, FieldValue, JsonValue, Opaque
+
+# A theory-spec record contributed by a translation: a sort declaration
+# or an operation declaration. The shape mirrors ``build_theory_spec``'s
+# spec dicts (sorts/ops are JSON-serialisable maps).
+type SpecRecord = dict[str, "JsonValue"]
 
 # The widest annotation form ``classify`` accepts. Includes the nominal
 # ``type`` (covering bare classes and pyright's special-cased parameterised
 # generics like ``tuple[int, ...]`` and ``dict[str, int]``) plus PEP 604
 # ``UnionType`` (``int | None``), which pyright does *not* narrow to
-# ``type``. Other typing special forms — ``typing.Union[...]``,
-# ``Annotated[...]``, PEP 695 type aliases — are accepted at runtime but
+# ``type``. Other typing special forms (``typing.Union[...]``,
+# ``Annotated[...]``, PEP 695 type aliases) are accepted at runtime but
 # fall outside this static union; callers that pass them rely on pyright's
 # legacy structural acceptance of those forms.
 TypeForm = type | UnionType
@@ -115,6 +121,25 @@ class TypeTranslation:
     Default identity (``lambda v: v``) is correct for ``str``, ``int``,
     ``float``, ``bool``, and ``None``; values that JSON natively
     represents.
+    """
+
+    auxiliary_sorts: tuple[SpecRecord, ...] = ()
+    """Extra sort declarations the parent Model's Theory must include.
+
+    Populated by translations that generate auxiliary panproto sorts
+    beyond the field's primary sort: currently only the Model-ref
+    recursive-alias translation, which contributes a closed sum sort
+    plus optional ``List`` / ``Map`` helper sorts. Empty for every
+    other translation. ``build_theory_spec`` walks this on each field
+    spec and merges by sort name (later duplicates dropped).
+    """
+
+    auxiliary_ops: tuple[SpecRecord, ...] = ()
+    """Extra operation declarations the parent Model's Theory must include.
+
+    The constructor operations of any auxiliary sum / list / map sort
+    declared in :attr:`auxiliary_sorts`. Walked alongside the sorts
+    in ``build_theory_spec``; deduped by op name.
     """
 
 
@@ -536,6 +561,636 @@ def _json_alias_translation(alias_name: str) -> TypeTranslation:
 
 
 # ---------------------------------------------------------------------------
+# Model-ref recursive type aliases (closed sum sort)
+# ---------------------------------------------------------------------------
+
+# A "Model-ref recursive alias" is a recursive type alias whose arms
+# include at least one ``dx.Model`` subclass alongside the JSON-shape
+# allow-list (primitive scalars, list/tuple/dict containers,
+# self-references). The motivating shape is::
+#
+#     class Heading(dx.Model):
+#         text: str
+#
+#     type Component = (
+#         str | int | Heading
+#         | list["Component"] | dict[str, "Component"]
+#     )
+#
+# These translate to a panproto-native closed sum sort. The metaclass
+# emits a ``Structural`` sort named after the alias whose
+# ``SortClosure`` is ``Closed`` against one ``Operation`` per arm:
+#
+#     Component_str(v: Component_str_value) -> Component
+#     Component_int(v: Component_int_value) -> Component
+#     Component_heading(v: Heading) -> Component
+#     Component_list(v: Component_List) -> Component
+#     Component_dict(v: Component_Map) -> Component
+#
+# ``Term::Case`` over the resulting sort is exhaustiveness-checked by
+# panproto-gat. Wire format is a single-key JSON object whose key is
+# the constructor name (matches the panproto term-of-closed-sort
+# encoding); see :func:`_alias_sum_translation` for the encoder.
+
+# Container payload sorts are Val-kinded with ``Str`` payloads in this
+# release (Phase A of the plan). Phase B promotes them to parametric
+# structural sorts shared with non-alias list/dict fields.
+
+_PRIMITIVE_TAGS: dict[type, str] = {
+    str: "str",
+    int: "int",
+    float: "float",
+    bool: "bool",
+    type(None): "none",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _AliasSignature:
+    """Structured summary of a Model-ref recursive alias's arm set."""
+
+    model_arms: tuple[type, ...]
+    primitives: frozenset[type]
+    has_list: bool
+    has_tuple: bool
+    has_dict: bool
+
+
+def _arm_is_model_or_json_shape(
+    arm: object,
+    alias_name: str,
+    alias_id: int,
+    depth: int,
+    model_arms_out: list[type],
+) -> bool:
+    """Predicate for the wider Model-ref allow-list.
+
+    Same as :func:`_arm_is_json_shape` but also admits ``dx.Model``
+    subclasses; each Model class encountered is appended (deduped by
+    identity) to ``model_arms_out`` so the caller can build the
+    constructor-name table without a second walk.
+    """
+    if depth > 64:
+        return False
+    if isinstance(arm, type):
+        if arm in _JSON_PRIMITIVE_TYPES:
+            return True
+        if _is_model_class(arm):
+            if arm not in model_arms_out:
+                model_arms_out.append(arm)
+            return True
+    if isinstance(arm, str) and arm == alias_name:
+        return True
+    if isinstance(arm, TypeAliasType) and id(arm) == alias_id:
+        return True
+    origin = get_origin(arm)
+    args = get_args(arm)
+    if origin is list:
+        return len(args) == 1 and _arm_is_model_or_json_shape(
+            args[0], alias_name, alias_id, depth + 1, model_arms_out
+        )
+    if origin is tuple:
+        return (
+            len(args) == 2
+            and args[1] is Ellipsis
+            and _arm_is_model_or_json_shape(
+                args[0], alias_name, alias_id, depth + 1, model_arms_out
+            )
+        )
+    if origin is dict:
+        return (
+            len(args) == 2
+            and args[0] is str
+            and _arm_is_model_or_json_shape(
+                args[1], alias_name, alias_id, depth + 1, model_arms_out
+            )
+        )
+    if origin in {Union, UnionType}:
+        return all(
+            _arm_is_model_or_json_shape(
+                a, alias_name, alias_id, depth + 1, model_arms_out
+            )
+            for a in args
+        )
+    return False
+
+
+def _is_model_class(cls: type) -> bool:
+    """Return True iff ``cls`` is a ``dx.Model`` subclass.
+
+    Imports ``Model`` lazily to avoid an import cycle (``models._model``
+    indirectly imports the types module).
+    """
+    from didactic.models._model import Model  # noqa: PLC0415
+
+    return issubclass(cls, Model)
+
+
+def _collect_alias_signature(alias: TypeAliasType) -> _AliasSignature:
+    """Walk a recursive Model-ref alias, return its arm signature.
+
+    Assumes the alias has already passed
+    :func:`_arm_is_model_or_json_shape`; the returned signature is
+    well-formed.
+    """
+    model_arms: list[type] = []
+    primitives: set[type] = set()
+    flags = {"list": False, "tuple": False, "dict": False}
+    aname = alias.__name__
+    aid = id(alias)
+
+    def walk(arm: object, depth: int) -> None:
+        if depth > 64:
+            return
+        if isinstance(arm, type):
+            if arm in _JSON_PRIMITIVE_TYPES:
+                primitives.add(arm)
+                return
+            if _is_model_class(arm):
+                if arm not in model_arms:
+                    model_arms.append(arm)
+                return
+        if isinstance(arm, str) and arm == aname:
+            return
+        if isinstance(arm, TypeAliasType) and id(arm) == aid:
+            return
+        origin = get_origin(arm)
+        args = get_args(arm)
+        if origin is list:
+            flags["list"] = True
+            walk(args[0], depth + 1)
+            return
+        if origin is tuple:
+            flags["tuple"] = True
+            walk(args[0], depth + 1)
+            return
+        if origin is dict:
+            flags["dict"] = True
+            walk(args[1], depth + 1)
+            return
+        if origin in {Union, UnionType}:
+            for a in args:
+                walk(a, depth + 1)
+
+    walk(alias.__value__, 0)
+    return _AliasSignature(
+        model_arms=tuple(model_arms),
+        primitives=frozenset(primitives),
+        has_list=flags["list"],
+        has_tuple=flags["tuple"],
+        has_dict=flags["dict"],
+    )
+
+
+def _model_arm_tag(cls: type) -> str:
+    """Build the constructor tag fragment for a Model arm.
+
+    Lower-cases the class name and strips any leading underscores
+    (which conventionally mark test-only or private classes and
+    shouldn't bleed into the on-wire constructor name).
+    """
+    return cls.__name__.lstrip("_").lower()
+
+
+def _alias_constructor_table(
+    alias_name: str, sig: _AliasSignature
+) -> dict[str, type | str]:
+    """Map constructor tag (e.g. ``Component_int``) to its arm dispatch key.
+
+    For primitive arms the value is the Python ``type`` (used for
+    instance-checking on encode and value identity on decode). For
+    Model arms it's the Model class. For container arms the value is
+    a marker string (``"list"``, ``"tuple"``, ``"dict"``) so the
+    encoder can branch.
+    """
+    table: dict[str, type | str] = {}
+    for typ in sig.primitives:
+        table[f"{alias_name}_{_PRIMITIVE_TAGS[typ]}"] = typ
+    for cls in sig.model_arms:
+        tag = f"{alias_name}_{_model_arm_tag(cls)}"
+        if tag in table:
+            msg = (
+                f"alias {alias_name!r} has two Model arms whose lowercased "
+                f"names collide on constructor tag {tag!r}; rename one of the "
+                "Model classes or use a wrapper subclass."
+            )
+            raise TypeNotSupportedError(msg)
+        table[tag] = cls
+    if sig.has_list:
+        table[f"{alias_name}_list"] = "list"
+    if sig.has_tuple:
+        table[f"{alias_name}_tuple"] = "tuple"
+    if sig.has_dict:
+        table[f"{alias_name}_dict"] = "dict"
+    return table
+
+
+def _alias_aux_spec(
+    alias_name: str, table: dict[str, type | str], sig: _AliasSignature
+) -> tuple[tuple[SpecRecord, ...], tuple[SpecRecord, ...]]:
+    """Build the auxiliary sort/op records for the alias's Theory.
+
+    Returns
+    -------
+    tuple
+        ``(sorts, ops)`` lists of plain dicts shaped for
+        :func:`build_theory_spec`'s consumption. Each constructor op
+        targets the alias's primary sum sort; the sum sort itself
+        carries a ``Closed`` closure listing every constructor name.
+    """
+    constructor_names: list[JsonValue] = list(table)
+    sorts: list[SpecRecord] = [
+        {
+            "name": alias_name,
+            "params": [],
+            "kind": "Structural",
+            "closure": {"Closed": constructor_names},
+        }
+    ]
+    ops: list[SpecRecord] = []
+    # primitive constructors take a Val-Str-kinded arg and produce the sum sort
+    for typ in sig.primitives:
+        tag = f"{alias_name}_{_PRIMITIVE_TAGS[typ]}"
+        arg_sort = f"{alias_name}__{_PRIMITIVE_TAGS[typ]}_value"
+        sorts.append(
+            {
+                "name": arg_sort,
+                "params": [],
+                "kind": {"Val": _value_kind_for_primitive(typ)},
+                "closure": "Open",
+            }
+        )
+        ops.append(
+            {
+                "name": tag,
+                "inputs": [["v", arg_sort, "No"]],
+                "output": alias_name,
+            }
+        )
+    # Model constructors take the Model's primary sort directly.
+    for cls in sig.model_arms:
+        tag = f"{alias_name}_{_model_arm_tag(cls)}"
+        ops.append(
+            {
+                "name": tag,
+                "inputs": [["v", cls.__name__, "No"]],
+                "output": alias_name,
+            }
+        )
+    # Container constructors share a Val-Str helper sort per container shape.
+    if sig.has_list or sig.has_tuple:
+        helper = f"{alias_name}__list_value"
+        sorts.append(
+            {
+                "name": helper,
+                "params": [],
+                "kind": {"Val": "Str"},
+                "closure": "Open",
+            }
+        )
+        if sig.has_list:
+            ops.append(
+                {
+                    "name": f"{alias_name}_list",
+                    "inputs": [["v", helper, "No"]],
+                    "output": alias_name,
+                }
+            )
+        if sig.has_tuple:
+            ops.append(
+                {
+                    "name": f"{alias_name}_tuple",
+                    "inputs": [["v", helper, "No"]],
+                    "output": alias_name,
+                }
+            )
+    if sig.has_dict:
+        helper = f"{alias_name}__dict_value"
+        sorts.append(
+            {
+                "name": helper,
+                "params": [],
+                "kind": {"Val": "Str"},
+                "closure": "Open",
+            }
+        )
+        ops.append(
+            {
+                "name": f"{alias_name}_dict",
+                "inputs": [["v", helper, "No"]],
+                "output": alias_name,
+            }
+        )
+    return tuple(sorts), tuple(ops)
+
+
+_PRIMITIVE_VALUE_KIND: dict[type, str] = {
+    str: "Str",
+    int: "Int",
+    float: "Float",
+    bool: "Bool",
+    type(None): "Null",
+}
+
+
+def _value_kind_for_primitive(typ: type) -> str:
+    """Map a primitive Python type to its panproto ``ValueKind`` variant."""
+    return _PRIMITIVE_VALUE_KIND[typ]
+
+
+def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
+    """Build a TypeTranslation for a Model-ref recursive alias.
+
+    Encoded form is a single-key JSON object whose key is the
+    constructor name (e.g. ``"Component_heading"``) and whose value
+    is the constructor's payload (a primitive, a Model dump-dict,
+    or a JSON array / object of inner-encoded values for the
+    container constructors). The translation also exposes
+    :attr:`TypeTranslation.auxiliary_sorts` and ``auxiliary_ops``
+    so :func:`build_theory_spec` can splice the alias's sum sort
+    and constructor ops into the parent Model's Theory.
+    """
+    alias_name = alias.__name__
+    sig = _collect_alias_signature(alias)
+    table = _alias_constructor_table(alias_name, sig)
+    aux_sorts, aux_ops = _alias_aux_spec(alias_name, table, sig)
+
+    # tag-by-Python-type for the encoder; primitives take precedence
+    # over Models (a Model that happens to subclass int would still
+    # round-trip via the int constructor, by design).
+    primitive_tag_by_type = {
+        typ: f"{alias_name}_{_PRIMITIVE_TAGS[typ]}" for typ in sig.primitives
+    }
+    model_tag_by_class = {
+        cls: f"{alias_name}_{_model_arm_tag(cls)}" for cls in sig.model_arms
+    }
+
+    def encode_one(value: object, seen: set[int]) -> JsonValue:
+        if id(value) in seen:
+            msg = (
+                f"alias {alias_name!r} value graph contains a cycle through "
+                f"object id={id(value)}; cycle support is out of scope for "
+                "this release."
+            )
+            raise ValueError(msg)
+        seen = seen | {id(value)}
+        # bool is an int subclass; check it before int.
+        if isinstance(value, bool) and bool in primitive_tag_by_type:
+            return {primitive_tag_by_type[bool]: value}
+        if value is None and type(None) in primitive_tag_by_type:
+            return {primitive_tag_by_type[type(None)]: None}
+        if isinstance(value, str) and str in primitive_tag_by_type:
+            return {primitive_tag_by_type[str]: value}
+        if isinstance(value, int) and int in primitive_tag_by_type:
+            return {primitive_tag_by_type[int]: value}
+        if isinstance(value, float) and float in primitive_tag_by_type:
+            return {primitive_tag_by_type[float]: value}
+        for cls, tag in model_tag_by_class.items():
+            if isinstance(value, cls):
+                # Model.model_dump returns the canonical record dict;
+                # the constructor payload IS that dict, no envelope.
+                model_value = cast("Model", value)
+                return {tag: cast("JsonValue", model_value.model_dump())}
+        if isinstance(value, tuple) and sig.has_tuple:
+            tup = cast("tuple[FieldValue, ...]", value)
+            inner: list[JsonValue] = [encode_one(item, seen) for item in tup]
+            return {f"{alias_name}_tuple": inner}
+        if isinstance(value, list) and sig.has_list:
+            lst = cast("list[FieldValue]", value)
+            inner = [encode_one(item, seen) for item in lst]
+            return {f"{alias_name}_list": inner}
+        if isinstance(value, dict) and sig.has_dict:
+            mapping = cast("dict[str, FieldValue]", value)
+            inner_obj: dict[str, JsonValue] = {
+                k: encode_one(v, seen) for k, v in mapping.items()
+            }
+            return {f"{alias_name}_dict": inner_obj}
+        msg = (
+            f"value of type {type(value).__name__} does not match any arm of "
+            f"alias {alias_name!r}; expected one of {sorted(table)}."
+        )
+        raise TypeError(msg)
+
+    def decode_one(payload: JsonValue) -> FieldValue:
+        if not isinstance(payload, dict):
+            msg = (
+                f"alias {alias_name!r} payload must be a single-key dict "
+                f"tagged by constructor; got {type(payload).__name__}."
+            )
+            raise TypeError(msg)
+        if len(payload) != 1:
+            msg = (
+                f"alias {alias_name!r} payload must have exactly one "
+                f"constructor key; got keys {sorted(payload)!r}."
+            )
+            raise ValueError(msg)
+        ((tag, body),) = payload.items()
+        if tag not in table:
+            msg = (
+                f"alias {alias_name!r} payload uses unknown constructor "
+                f"{tag!r}; expected one of {sorted(table)!r}."
+            )
+            raise KeyError(tag)
+        target = table[tag]
+        if isinstance(target, type):
+            if target in _JSON_PRIMITIVE_TYPES:
+                # primitive arm; payload is the literal value
+                return cast("FieldValue", body)
+            # Model arm; ``target`` came from the alias's collected
+            # Model classes so it's known to expose ``model_validate``.
+            model_cls = cast("type[Model]", target)
+            return model_cls.model_validate(cast("Mapping[str, JsonValue]", body))
+        # container arm; body is a JSON list/dict of inner-encoded values
+        if target in {"list", "tuple"}:
+            if not isinstance(body, list):
+                msg = (
+                    f"alias {alias_name!r} container constructor {tag!r} "
+                    f"payload must be a JSON array; got "
+                    f"{type(body).__name__}."
+                )
+                raise TypeError(msg)
+            return tuple(decode_one(item) for item in body)
+        # target == "dict"
+        if not isinstance(body, dict):
+            msg = (
+                f"alias {alias_name!r} dict constructor {tag!r} payload "
+                f"must be a JSON object; got {type(body).__name__}."
+            )
+            raise TypeError(msg)
+        return {k: decode_one(v) for k, v in body.items()}
+
+    def enc(v: FieldValue) -> Encoded:
+        return json.dumps(encode_one(v, set()))
+
+    def dec(s: Encoded) -> FieldValue:
+        return decode_one(json.loads(s))
+
+    def from_json(v: JsonValue) -> FieldValue:
+        return decode_one(v)
+
+    return TypeTranslation(
+        sort=alias_name,
+        encode=enc,
+        decode=dec,
+        inner_kind="sum",
+        from_json=from_json,
+        auxiliary_sorts=aux_sorts,
+        auxiliary_ops=aux_ops,
+    )
+
+
+# ---------------------------------------------------------------------------
+# TaggedUnion as field type (closed sum sort dispatched by discriminator)
+# ---------------------------------------------------------------------------
+
+# A ``dx.TaggedUnion`` subclass declared with a ``discriminator=`` keyword is
+# a sum over the variants registered against it (``cls.__variants__``). When
+# a Model field is annotated with the union root, the field accepts any
+# variant; on encode the variant is dumped to its record dict (which already
+# carries the discriminator value), on decode the discriminator field
+# selects which variant to instantiate. The wire format is therefore the
+# variant's natural ``model_dump`` shape; no envelope and no synthesised
+# constructor tag is needed because the discriminator IS the constructor
+# tag, baked into every variant.
+#
+# The translation also exposes the closed sum sort plus per-variant
+# constructor ops via ``auxiliary_sorts`` / ``auxiliary_ops``, so the
+# parent Model's Theory carries the same panproto-native sum-sort shape
+# as a Model-ref recursive alias would.
+
+
+def _is_tagged_union_root(cls: type) -> bool:
+    """Return True iff ``cls`` is a ``TaggedUnion`` subclass with variants set."""
+    from didactic.fields._unions import TaggedUnion  # noqa: PLC0415
+
+    if not issubclass(cls, TaggedUnion):
+        return False
+    if cls is TaggedUnion:
+        return False
+    return cls.__discriminator__ is not None and bool(cls.__variants__)
+
+
+def _tagged_union_translation(cls: type) -> TypeTranslation:
+    """Build a TypeTranslation for a ``dx.TaggedUnion`` root used as a field type.
+
+    The encoded form is the JSON dump of the chosen variant (a dict
+    that already carries the discriminator field). The decoder
+    inspects the discriminator field, looks the variant up in
+    ``cls.__variants__``, and instantiates it via ``model_validate``.
+    """
+    discriminator = cast("str", cls.__discriminator__)  # type: ignore[attr-defined]
+    variants_by_value: dict[object, type[Model]] = dict(cls.__variants__)  # type: ignore[attr-defined]
+    union_name = cls.__name__
+
+    aux_sorts, aux_ops = _tagged_union_aux_spec(
+        union_name, discriminator, variants_by_value
+    )
+
+    def encode_one(value: object) -> JsonValue:
+        for variant_cls in variants_by_value.values():
+            if isinstance(value, variant_cls):
+                return cast("JsonValue", value.model_dump())
+        variant_names = sorted(v.__name__ for v in variants_by_value.values())
+        msg = (
+            f"value of type {type(value).__name__} is not a registered variant "
+            f"of TaggedUnion {union_name!r}; expected one of {variant_names}."
+        )
+        raise TypeError(msg)
+
+    def decode_one(payload: JsonValue) -> FieldValue:
+        if not isinstance(payload, dict):
+            msg = (
+                f"TaggedUnion {union_name!r} payload must be a dict; got "
+                f"{type(payload).__name__}."
+            )
+            raise TypeError(msg)
+        if discriminator not in payload:
+            msg = (
+                f"TaggedUnion {union_name!r} payload is missing discriminator "
+                f"field {discriminator!r}; got keys {sorted(payload)!r}."
+            )
+            raise KeyError(discriminator)
+        disc_value = payload[discriminator]
+        variant_cls = variants_by_value.get(disc_value)
+        if variant_cls is None:
+            known_values = [repr(v) for v in variants_by_value]
+            msg = (
+                f"TaggedUnion {union_name!r} has no variant registered for "
+                f"{discriminator}={disc_value!r}; expected one of "
+                f"{known_values}."
+            )
+            raise KeyError(disc_value)
+        # Route through ``model_validate_json`` so the variant's per-field
+        # ``from_json`` callables get a chance to coerce JSON-shaped values
+        # (e.g. list -> tuple for ``tuple[float, ...]`` fields) before
+        # construction. ``model_validate`` would feed the raw JSON shape
+        # straight to the field encoders, which expect Python-native types.
+        return variant_cls.model_validate_json(json.dumps(payload))
+
+    def enc(v: FieldValue) -> Encoded:
+        return json.dumps(encode_one(v))
+
+    def dec(s: Encoded) -> FieldValue:
+        return decode_one(json.loads(s))
+
+    def from_json(v: JsonValue) -> FieldValue:
+        return decode_one(v)
+
+    return TypeTranslation(
+        sort=union_name,
+        encode=enc,
+        decode=dec,
+        inner_kind="sum",
+        from_json=from_json,
+        auxiliary_sorts=aux_sorts,
+        auxiliary_ops=aux_ops,
+    )
+
+
+def _tagged_union_aux_spec(
+    union_name: str,
+    discriminator: str,
+    variants_by_value: dict[object, type[Model]],
+) -> tuple[tuple[SpecRecord, ...], tuple[SpecRecord, ...]]:
+    """Build the auxiliary sort/op records for a TaggedUnion used as a field type.
+
+    Constructor names are ``<UnionName>_<discriminator-value>`` (the
+    discriminator value is the natural variant identifier and matches
+    what the wire format already carries). Each constructor op takes
+    the variant's primary sort as its single input and outputs the
+    union sort. The closed sum sort declares ``Closed`` against every
+    constructor name.
+    """
+    constructor_table: dict[str, type[Model]] = {}
+    for disc_value, variant_cls in variants_by_value.items():
+        tag = f"{union_name}_{disc_value!s}"
+        constructor_table[tag] = variant_cls
+    constructor_names: list[JsonValue] = list(constructor_table)
+    sorts: list[SpecRecord] = [
+        {
+            "name": union_name,
+            "params": [],
+            "kind": "Structural",
+            "closure": {"Closed": constructor_names},
+        }
+    ]
+    ops: list[SpecRecord] = [
+        {
+            "name": tag,
+            "inputs": [["v", variant_cls.__name__, "No"]],
+            "output": union_name,
+        }
+        for tag, variant_cls in constructor_table.items()
+    ]
+    # Reference the discriminator name in a metadata field on the sum
+    # sort so consumers can introspect the dispatch convention without
+    # round-tripping the Python class. The panproto schema spec ignores
+    # unknown keys; this is purely informational.
+    sorts[0]["discriminator"] = discriminator
+    return tuple(sorts), tuple(ops)
+
+
+# ---------------------------------------------------------------------------
 # Annotated handling
 # ---------------------------------------------------------------------------
 
@@ -569,16 +1224,26 @@ def _expand_type_alias(typ: TypeForm) -> TypeForm:
     if isinstance(cast("object", typ), TypeAliasType):
         alias = cast("TypeAliasType", typ)
         # recursive alias: leave unwrapped so classify can build the
-        # JSON-fixpoint translation. Reject recursive aliases that are
-        # not JSON-shaped early, with a clear message.
+        # appropriate fixpoint translation. Two recursive shapes are
+        # accepted: pure JSON-shaped (handled by ``_json_alias_translation``)
+        # and the wider Model-ref shape (``_alias_sum_translation``).
+        # Anything else is rejected up front with a clear message.
         if _has_self_reference(alias.__value__, alias.__name__, id(alias)):
-            if not _arm_is_json_shape(alias.__value__, alias.__name__, id(alias), 0):
+            model_arms_probe: list[type] = []
+            if not _arm_is_model_or_json_shape(
+                alias.__value__,
+                alias.__name__,
+                id(alias),
+                0,
+                model_arms_probe,
+            ):
                 msg = (
                     f"recursive type alias {alias.__name__!r} contains an arm "
-                    "that is not JSON-shaped (allowed: primitive scalars, "
-                    "list[X], tuple[X, ...], dict[str, X], unions of these, "
-                    "and self-references). Restrict the alias to the "
-                    "JSON-compatible subset, or use a dx.TaggedUnion."
+                    "that is not in the supported allow-list (primitive "
+                    "scalars, dx.Model subclasses, list[X], tuple[X, ...], "
+                    "dict[str, X], unions of these, and self-references). "
+                    "Restrict the alias to the supported subset, or use a "
+                    "dx.TaggedUnion."
                 )
                 raise TypeNotSupportedError(msg)
             return cast("TypeForm", alias)
@@ -842,14 +1507,19 @@ def classify(typ: TypeForm) -> TypeTranslation:
     """
     # Expand PEP 695 type aliases (``Embed[T]``, ``Ref[T]``) so the
     # downstream Annotated logic sees the underlying form. Recursive
-    # JSON-shaped aliases come back unwrapped; we detect them here and
-    # build the JSON-fixpoint translation directly.
+    # aliases come back unwrapped; we dispatch on shape (Model-ref
+    # gets the closed sum-sort translation; pure JSON-shaped gets the
+    # opaque JSON-fixpoint translation).
     typ = _expand_type_alias(typ)
     if isinstance(cast("object", typ), TypeAliasType):
         alias = cast("TypeAliasType", typ)
-        # _expand_type_alias only returns a ``TypeAliasType`` when it has
-        # already validated that the alias is a JSON-shaped recursive
-        # alias (otherwise it unwraps or raises).
+        # ``_expand_type_alias`` only returns a ``TypeAliasType`` when
+        # the alias passed the wider Model-or-JSON allow-list. Now
+        # decide which translation to build: any Model arm forces the
+        # sum-sort path; pure JSON-shaped uses the opaque fixpoint.
+        sig = _collect_alias_signature(alias)
+        if sig.model_arms:
+            return _alias_sum_translation(alias)
         return _json_alias_translation(alias.__name__)
     # Annotated[T, ...]; strip metadata, recurse on the base
     if get_origin(typ) is Annotated:
@@ -899,6 +1569,12 @@ def classify(typ: TypeForm) -> TypeTranslation:
     # scalar
     if isinstance(inner_type, type) and _is_scalar(inner_type):
         return _scalar_translation(inner_type)
+
+    # TaggedUnion root used as a field type: dispatch via the variants'
+    # discriminator field. The translation contributes a closed sum
+    # sort plus per-variant constructor ops to the parent Model's Theory.
+    if isinstance(inner_type, type) and _is_tagged_union_root(inner_type):
+        return _tagged_union_translation(inner_type)
 
     # parameterised generics
     origin = get_origin(inner_type)

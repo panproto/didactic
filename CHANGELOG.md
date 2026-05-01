@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-01
+
+### Added
+
+- Recursive type aliases whose arms include `dx.Model` subclasses now
+  translate to a panproto-native closed sum sort. The motivating shape
+  is a `Component` alias mixing primitives, Models, and JSON-compatible
+  containers; the alias name becomes the panproto sort, with one
+  `Operation` per arm declared as a constructor and the sort's
+  `SortClosure` set to `Closed` against that constructor list. Wire
+  format for an arm value is a single-key JSON object whose key is
+  the constructor name (matches panproto's term-of-closed-sort
+  encoding). Lists round-trip as tuples to satisfy the tuple-based
+  `FieldValue` invariant. Cycles in the value graph raise
+  `ValueError` rather than recurse. ([#2])
+- `dx.TaggedUnion` subclasses are now usable directly as a field value
+  type. `dict[str, Parameter]`, `tuple[Parameter, ...]`, and a bare
+  `param: Parameter` annotation all work, with dispatch via the
+  variant's discriminator field. The translation contributes a closed
+  sum sort and per-variant constructor ops to the parent Model's
+  Theory; the on-wire format is the variant's natural `model_dump`
+  (no envelope, since the discriminator is already in the payload).
+  ([#5])
+- `TypeTranslation` gains optional `auxiliary_sorts` and
+  `auxiliary_ops` tuples that let a translation contribute extra
+  panproto sort and operation declarations to the parent Model's
+  Theory. Currently produced by the recursive Model-ref alias and
+  TaggedUnion translations; `build_theory_spec` walks them and
+  dedupes by name. Empty for every other translation.
+- `inner_kind = "sum"` joins the documented set of `TypeTranslation`
+  inner-kind values. `model_dump` routes sum-sort fields through their
+  encoder so the constructor-tag dispatch survives JSON round-trip.
+
+### Notes
+
+- Recursive aliases that aren't pure JSON-shape and aren't
+  Model-ref-shape (e.g. one admitting `bytes`, `Decimal`, or a
+  non-Model class) continue to raise `TypeNotSupportedError` with a
+  clear message.
+- Panproto's `Theory.sorts` and `Theory.ops` attributes are list-typed
+  at runtime, contrary to the shipped `_native.pyi` stub which marks
+  them as methods. Tests that introspect a built Theory treat them
+  as data.
+
+[#2]: https://github.com/panproto/didactic/issues/2
+[#5]: https://github.com/panproto/didactic/issues/5
+
 ## [0.2.0] - 2026-05-01
 
 ### Added

@@ -89,9 +89,11 @@ extend-ignore-names = ["A", "B", "T", "P"]
 # primitives; expanding it doesn't help readability
 "**/_json_schema.py" = ["PLR0911", "PLR0912"]
 # ``_types.py`` houses the multi-shape origin dispatch (list/tuple/dict/union/
-# self-ref) for JSON-shape detection; flattening into helpers obscures the
-# table of cases.
-"**/types/_types.py" = ["PLR0911"]
+# self-ref) for JSON-shape detection, the dispatch in ``classify`` itself, and
+# the alias-sum translation factory whose encode/decode/from_json closures
+# share a captured constructor table; flattening any of these into helpers
+# obscures the table of cases or breaks the closure boundary.
+"**/types/_types.py" = ["PLR0911", "PLR0912", "PLR0915"]
 # model_dump's option matrix is genuinely n-flag and requires per-flag
 # checks; splitting into helpers would just hide the same logic
 "**/models/_model.py" = ["PLR0912"]

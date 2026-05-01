@@ -340,6 +340,15 @@ class Model(metaclass=ModelMeta):
             if isinstance(value, Model):
                 # Embed[T] fields: recurse into the sub-model
                 result[key] = value.model_dump(by_alias=by_alias)
+            elif spec.translation.inner_kind == "sum":
+                # Sum-sort fields (Model-ref recursive aliases) carry
+                # constructor-tag dispatch info that gets lost if we drop
+                # the value into the dump as-is. Route through the
+                # translation's encoder to produce the tagged JsonValue
+                # shape; ``model_validate_json`` reverses it.
+                result[key] = cast(
+                    "FieldValue", json.loads(spec.translation.encode(value))
+                )
             else:
                 result[key] = value
         # computed fields evaluate on access; include them in the dump but
