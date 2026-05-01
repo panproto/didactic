@@ -383,3 +383,165 @@ def test_recursive_json_alias_works_as_model_field() -> None:
     assert v2.params["semitones"] == 5
     assert v2.params["tags"] == ("a", "b")
     assert v2.params["meta"] == {"v": 1.0}
+
+
+# -- Model-ref recursive type aliases (planned for v0.3.0) -----------------
+#
+# A recursive alias whose body mixes primitive scalars, JSON-compatible
+# containers, and ``dx.Model`` subclasses. Encoded by walking the value
+# and replacing each Model instance with a ``$schema``-tagged envelope so
+# the decoder can dispatch to the right ``Model.model_validate``. See
+# ``notes/plan-model-ref-recursive-aliases.md`` for the full design.
+
+
+class _Heading(dx.Model):
+    text: str
+    level: int = 1
+
+
+class _Paragraph(dx.Model):
+    text: str
+
+
+type _Component = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | _Heading
+    | _Paragraph
+    | list["_Component"]
+    | tuple["_Component", ...]
+    | dict[str, "_Component"]
+)
+
+
+def test_model_ref_alias_classifies_as_named_sort() -> None:
+    t = classify(_Component)
+    assert t.sort == "_Component"
+
+
+def test_model_ref_alias_round_trips_primitive_arm() -> None:
+    t = classify(_Component)
+    for value in ("hello", 42, 1.5, True, None):
+        assert t.decode(t.encode(value)) == value
+
+
+def test_model_ref_alias_round_trips_single_model() -> None:
+    t = classify(_Component)
+    h = _Heading(text="Intro", level=2)
+    decoded = t.decode(t.encode(h))
+    assert isinstance(decoded, _Heading)
+    assert decoded == h
+
+
+def test_model_ref_alias_round_trips_list_of_models() -> None:
+    t = classify(_Component)
+    src = [_Heading(text="A"), _Paragraph(text="B"), _Heading(text="C")]
+    decoded = t.decode(t.encode(src))
+    # lists round-trip as tuples (FieldValue invariant)
+    assert decoded == (
+        _Heading(text="A"),
+        _Paragraph(text="B"),
+        _Heading(text="C"),
+    )
+
+
+def test_model_ref_alias_dict_with_mixed_arms() -> None:
+    t = classify(_Component)
+    src = {
+        "title": _Heading(text="Doc", level=1),
+        "intro": _Paragraph(text="Welcome"),
+        "count": 7,
+        "tags": ["a", "b"],
+    }
+    decoded = t.decode(t.encode(src))
+    assert decoded == {
+        "title": _Heading(text="Doc", level=1),
+        "intro": _Paragraph(text="Welcome"),
+        "count": 7,
+        "tags": ("a", "b"),
+    }
+
+
+def test_model_ref_alias_nested_model_in_dict_in_list() -> None:
+    t = classify(_Component)
+    src = [{"item": _Paragraph(text="nested")}]
+    decoded = t.decode(t.encode(src))
+    assert decoded == ({"item": _Paragraph(text="nested")},)
+
+
+def test_model_ref_alias_envelope_format() -> None:
+    """The encoded envelope shape is documented and version-tagged."""
+    import json as _json
+
+    t = classify(_Component)
+    raw = _json.loads(t.encode(_Heading(text="X", level=3)))
+    assert raw["$envelope"] == "v1"
+    assert isinstance(raw["$schema"], str)
+    assert raw["$value"] == {"text": "X", "level": 3}
+
+
+def test_model_ref_alias_rejects_unknown_dispatch_uri() -> None:
+    """An envelope referencing a Model not in the alias's class set fails."""
+    import json as _json
+
+    t = classify(_Component)
+    bogus = _json.dumps(
+        {
+            "$envelope": "v1",
+            "$schema": "didactic://fingerprint/notavalidmodel",
+            "$value": {"x": 1},
+        }
+    )
+    with pytest.raises((KeyError, ValueError, TypeError)):
+        t.decode(bogus)
+
+
+def test_model_ref_alias_rejects_non_model_class_arm() -> None:
+    """A recursive alias with a plain (non-Model) class arm is rejected."""
+
+    class _Plain:
+        pass
+
+    type _BadAlias = str | _Plain | list["_BadAlias"]
+
+    with pytest.raises(TypeNotSupportedError):
+        classify(_BadAlias)
+
+
+def test_model_ref_alias_cycle_raises() -> None:
+    """A value graph that loops through the alias raises rather than recurse."""
+    t = classify(_Component)
+    # construct a cycle by mutating the underlying dict after it's stored;
+    # Models are frozen, so the cycle has to live on a container value
+    inner: dict[str, object] = {"a": 1}
+    inner["self"] = inner
+    with pytest.raises((RecursionError, ValueError)):
+        t.encode(inner)
+
+
+def test_model_ref_alias_works_as_model_field() -> None:
+    """Integration: a Model with a model-ref recursive field round-trips."""
+
+    class _Document(dx.Model):
+        title: str
+        body: _Component
+
+    d = _Document(
+        title="Spec",
+        body=[
+            _Heading(text="Overview", level=1),
+            _Paragraph(text="This is the overview."),
+            {"meta": {"version": 1}},
+        ],
+    )
+    raw = d.model_dump_json()
+    d2 = _Document.model_validate_json(raw)
+    assert d2.title == "Spec"
+    assert d2.body == (
+        _Heading(text="Overview", level=1),
+        _Paragraph(text="This is the overview."),
+        {"meta": {"version": 1}},
+    )
