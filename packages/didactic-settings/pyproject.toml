@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "didactic-settings"
+version = "0.1.0"
+description = "Typed application settings on top of didactic Models."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [
+    { name = "Aaron Steven White", email = "aaronstevenwhite@gmail.com" },
+]
+keywords = ["settings", "configuration", "didactic", "panproto"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = [
+    "didactic",
+]
+
+[project.optional-dependencies]
+yaml = ["pyyaml>=6"]
+toml = []
+
+[tool.hatch.build.targets.sdist]
+include = ["src/didactic/settings"]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/didactic/settings"]
+sources = ["src"]
