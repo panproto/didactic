@@ -1,3 +1,10 @@
+# panproto 0.43's ``_native.pyi`` stub for ``create_theory``/``colimit_theories``
+# disagrees with the runtime: ``create_theory`` declares ``dict[str, object]``
+# (rejecting our ``TheorySpec`` TypedDict, which IS a dict at runtime), and
+# ``colimit_theories`` is stubbed as ``(Sequence[Theory], /)`` while the
+# runtime is ``(t1, t2, shared)``. Tracked in panproto/didactic#1; will be
+# removed once panproto ships corrected stubs.
+# pyright: reportArgumentType=false, reportCallIssue=false, reportUnknownVariableType=false
 """Bridge between didactic FieldSpecs and ``panproto.Theory``.
 
 This module is the seam where the didactic-side metaclass output
