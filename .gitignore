@@ -1,0 +1,48 @@
+# dev-only working notes, design drafts, scratch
+notes/
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# virtualenvs
+.venv/
+venv/
+env/
+
+# uv
+.uv/
+
+# testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# type-checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# mkdocs build output
+site/
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# os
+.DS_Store
+Thumbs.db

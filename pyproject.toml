@@ -1,0 +1,153 @@
+[project]
+name = "didactic-workspace"
+version = "0.0.0"
+description = "Workspace root for the didactic library family."
+requires-python = ">=3.14"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+didactic = { workspace = true }
+didactic-pydantic = { workspace = true }
+didactic-settings = { workspace = true }
+didactic-fastapi = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "hypothesis>=6.115",
+    "ruff>=0.8",
+    "pyright>=1.1.388",
+    "mypy>=1.13",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+    "mkdocs-autorefs>=1.2",
+    "griffe>=1.5",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+src = ["packages/didactic/src", "packages/didactic-pydantic/src"]
+
+[tool.ruff.lint]
+# extend the defaults with strict docstring/style/typing checks
+select = [
+    "E", "F", "W",        # pycodestyle / pyflakes
+    "I",                  # isort
+    "B",                  # flake8-bugbear
+    "C4",                 # flake8-comprehensions
+    "UP",                 # pyupgrade
+    "N",                  # pep8-naming
+    "D",                  # pydocstyle (numpy convention configured below)
+    "RUF",                # ruff-specific
+    "SIM",                # flake8-simplify
+    "TCH",                # flake8-type-checking
+    "PTH",                # flake8-use-pathlib
+    "RET",                # flake8-return
+    "ARG",                # flake8-unused-arguments
+    "PIE",                # flake8-pie
+    "PL",                 # pylint subset
+]
+ignore = [
+    # `__init__` docstring — we document params on the class itself
+    "D107",
+    # PEP 695 generics: pyupgrade tries to rewrite them, but we want
+    # to be strict about authoring them
+    "PLR0913",            # too many args; relevant for field()
+    "PLR2004",            # magic-value comparisons in tests
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.pep8-naming]
+# allow short type-variable names like A, B, T, P
+extend-ignore-names = ["A", "B", "T", "P"]
+
+[tool.ruff.lint.per-file-ignores]
+# tests live under packages/<dist>/tests/ — match nested layouts as well.
+# N806 is suppressed in tests because we frequently assign newly-built
+# Model classes to local variables (e.g. `User = from_pydantic(PydUser)`)
+# where the local name is the conceptual class name and lowercasing it
+# would actively obscure intent.
+"**/tests/**/*.py" = [
+    "D", "ARG", "PLR2004", "S101", "PLR0913", "N806",
+    "PLC0415",  # function-scoped imports are useful for fixture isolation
+    "RUF012",   # mutable class attrs in test models are intentional (e.g. __axioms__)
+    "RUF043",   # match= regex literal warnings are noise in tests
+    "I001",     # import sorting in test files; ruff format handles this
+]
+"**/conftest.py" = ["D"]
+"**/__init__.py" = ["D104", "E402", "F401"]
+# the axiom AST evaluator is a long branchy walker by nature; lint
+# rules about branch counts and return statements aren't useful here
+"**/_axiom_enforcement.py" = ["PLR0911", "PLR0912"]
+# the json-schema emitter has a long if-elif chain matching annotated-types
+# primitives; expanding it doesn't help readability
+"**/_json_schema.py" = ["PLR0911", "PLR0912"]
+# model_dump's option matrix is genuinely n-flag and requires per-flag
+# checks; splitting into helpers would just hide the same logic
+"**/models/_model.py" = ["PLR0912"]
+# tests aren't third-party-import-restricted
+"packages/didactic-settings/tests/*.py" = ["TC001", "TC002", "TC003"]
+# fastapi handler does runtime-only imports inside the function body
+"packages/didactic-fastapi/src/didactic/fastapi/_adapter.py" = ["TC001", "TC002"]
+# example scripts use brief Lens/Migration subclasses whose method
+# bodies are self-explanatory from the surrounding narrative.
+"examples/*.py" = ["D102", "N806"]
+
+[tool.ruff.format]
+# match black-style defaults; double quotes, trailing commas
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.pyright]
+pythonVersion = "3.14"
+pythonPlatform = "All"
+typeCheckingMode = "strict"
+include = [
+    "packages/didactic/src",
+    "packages/didactic-pydantic/src",
+    "packages/didactic-settings/src",
+    "packages/didactic-fastapi/src",
+    "packages/didactic/tests",
+    "packages/didactic-pydantic/tests",
+    "packages/didactic-settings/tests",
+    "packages/didactic-fastapi/tests",
+]
+extraPaths = [
+    "packages/didactic/src",
+    "packages/didactic-pydantic/src",
+    "packages/didactic-settings/src",
+    "packages/didactic-fastapi/src",
+]
+reportMissingTypeStubs = false   # panproto's stubs are slim; relax this one
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+mypy_path = "packages/didactic/src:packages/didactic-pydantic/src"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = [
+    "packages/didactic/tests",
+    "packages/didactic-pydantic/tests",
+    "packages/didactic-settings/tests",
+    "packages/didactic-fastapi/tests",
+]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+]
+filterwarnings = [
+    "error",
+]

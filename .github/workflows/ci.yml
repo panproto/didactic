@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: install python
+        run: uv python install 3.14
+      - name: sync workspace
+        run: uv sync --all-packages --all-extras
+      - name: ruff format check
+        run: uv run ruff format --check
+      - name: ruff lint
+        run: uv run ruff check
+
+  type-check:
+    name: type-check
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv python install 3.14
+      - run: uv sync --all-packages --all-extras
+      - name: pyright (strict)
+        run: uv run pyright
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv python install 3.14
+      - run: uv sync --all-packages --all-extras
+      - name: pytest
+        run: uv run pytest -ra
+
+  docs-build:
+    name: docs build (strict)
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv python install 3.14
+      - run: uv sync --all-packages --all-extras
+      - name: build docs (strict)
+        run: uv run mkdocs build --strict
