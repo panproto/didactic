@@ -337,18 +337,16 @@ class Model(metaclass=ModelMeta):
             if exclude_defaults and not spec.is_required and value == spec.default:
                 continue
             key = spec.alias if by_alias and spec.alias else fname
-            if isinstance(value, Model):
-                # Embed[T] fields: recurse into the sub-model
-                result[key] = value.model_dump(by_alias=by_alias)
-            elif spec.translation.inner_kind == "sum":
-                # Sum-sort fields (Model-ref recursive aliases) carry
-                # constructor-tag dispatch info that gets lost if we drop
-                # the value into the dump as-is. Route through the
-                # translation's encoder to produce the tagged JsonValue
-                # shape; ``model_validate_json`` reverses it.
+            # Sum-sort fields must run first: a sum field whose current
+            # value is a Model variant would otherwise be dumped as a
+            # plain Model below and lose its constructor tag.
+            if spec.translation.inner_kind == "sum":
                 result[key] = cast(
                     "FieldValue", json.loads(spec.translation.encode(value))
                 )
+            elif isinstance(value, Model):
+                # Embed[T] fields: recurse into the sub-model
+                result[key] = value.model_dump(by_alias=by_alias)
             else:
                 result[key] = value
         # computed fields evaluate on access; include them in the dump but
