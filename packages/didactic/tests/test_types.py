@@ -208,3 +208,67 @@ def test_nested_dict_of_optional() -> None:
     src: dict[str, FieldValue] = {"a": 1, "b": None}
     decoded = t.decode(t.encode(src))
     assert decoded == src
+
+
+# -- PEP 695 type aliases (gh #2.1) ----------------------------------------
+
+type _AliasedKind = Literal["a", "b", "c"]
+type _AliasedInt = int
+
+
+def test_pep695_alias_to_literal_translates() -> None:
+    t = classify(_AliasedKind)
+    assert t.sort.startswith("Enum")
+    assert t.decode(t.encode("a")) == "a"
+
+
+def test_pep695_alias_to_scalar_translates() -> None:
+    t = classify(_AliasedInt)
+    assert t.sort == "Int"
+    assert t.decode(t.encode(7)) == 7
+
+
+def test_pep695_alias_inside_dict_translates() -> None:
+    t = classify(dict[str, _AliasedKind])
+    assert t.sort.startswith("Map String (Enum")
+    src: dict[str, FieldValue] = {"x": "a", "y": "b"}
+    assert t.decode(t.encode(src)) == src
+
+
+# -- union of primitives (gh #3, #2.3) -------------------------------------
+
+
+def test_union_int_str_translates() -> None:
+    t = classify(int | str)
+    assert "Int" in t.sort and "String" in t.sort
+    assert t.decode(t.encode(42)) == 42
+    assert t.decode(t.encode("hello")) == "hello"
+
+
+def test_union_float_str_round_trip() -> None:
+    t = classify(float | str)
+    assert t.decode(t.encode(1.5)) == 1.5
+    assert t.decode(t.encode("verse_2")) == "verse_2"
+
+
+def test_union_with_none_then_two_primitives() -> None:
+    t = classify(int | str | None)
+    assert t.is_optional
+    assert t.decode(t.encode(None)) is None
+    assert t.decode(t.encode(7)) == 7
+    assert t.decode(t.encode("x")) == "x"
+
+
+def test_dict_value_union_of_primitives() -> None:
+    t = classify(dict[str, int | float | str])
+    src: dict[str, FieldValue] = {"a": 1, "b": 2.5, "c": "tag"}
+    decoded = t.decode(t.encode(src))
+    assert decoded == src
+
+
+def test_union_of_non_primitives_still_rejected() -> None:
+    class _M:
+        pass
+
+    with pytest.raises(TypeNotSupportedError):
+        classify(int | _M)

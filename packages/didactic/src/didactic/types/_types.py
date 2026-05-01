@@ -37,6 +37,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
+from functools import reduce
 from types import EllipsisType, NoneType, UnionType
 from typing import (
     TYPE_CHECKING,
@@ -312,30 +313,102 @@ def _scalar_translation(typ: type) -> TypeTranslation:
 def _strip_optional(typ: TypeForm) -> tuple[TypeForm, bool]:
     """Peel a single ``T | None`` layer; return ``(inner, was_optional)``.
 
-    Anything beyond a binary ``T | None`` is left to the caller, which
-    will raise a TypeNotSupportedError for general unions (didactic
-    expresses sums via ``dx.TaggedUnion``, not via raw unions).
+    The returned inner may itself be a union (``int | str``); the caller
+    is responsible for classifying it via ``_classify_primitive_union``.
     """
     origin = get_origin(typ)
     if origin in {Union, UnionType}:
-        args = [a for a in get_args(typ) if a is not NoneType]
-        non_none = list(get_args(typ))
-        had_none = NoneType in non_none
-        if had_none and len(args) == 1:
-            return args[0], True
-        if had_none and len(args) > 1:
-            msg = (
-                "didactic does not yet support unions of more than one non-None "
-                f"type; got {typ!r}. Use a dx.TaggedUnion subclass."
-            )
-            raise TypeNotSupportedError(msg)
-        if not had_none:
-            msg = (
-                "didactic does not yet support raw Python unions without None; "
-                f"got {typ!r}. Use a dx.TaggedUnion subclass."
-            )
-            raise TypeNotSupportedError(msg)
+        non_none = [a for a in get_args(typ) if a is not NoneType]
+        had_none = NoneType in get_args(typ)
+        if had_none and len(non_none) == 1:
+            return non_none[0], True
+        if had_none and len(non_none) > 1:
+            # rebuild the union without None via PEP 604 ``|``; the
+            # ``X | Y`` operator is the only PEP-604-compliant way to
+            # construct a ``UnionType`` from a runtime sequence. The
+            # local lambda avoids ``operator.or_``'s partially-typed
+            # typeshed stub.
+            def _union(a: TypeForm, b: TypeForm) -> TypeForm:
+                return cast("TypeForm", a | b)
+
+            return reduce(_union, non_none), True
     return typ, False
+
+
+# ---------------------------------------------------------------------------
+# Union of primitive scalars
+# ---------------------------------------------------------------------------
+
+
+def _classify_primitive_union(args: tuple[TypeForm, ...]) -> TypeTranslation:
+    """Classify a union whose every arm is a registered scalar.
+
+    The encoded form is a JSON literal (``42``, ``"hello"``, ``1.5``); the
+    decoder uses ``json.loads`` and dispatches on the resulting Python
+    type. The synthesised sort name lists each arm's panproto sort in a
+    canonical order so that equivalent unions produce the same sort.
+    """
+    arms: list[type] = []
+    for arm in args:
+        if not (isinstance(arm, type) and arm in _SCALARS):
+            msg = (
+                "didactic supports unions only when every arm is a registered "
+                f"scalar; got arm {arm!r} in union {args!r}. Use a "
+                "dx.TaggedUnion subclass for richer sums."
+            )
+            raise TypeNotSupportedError(msg)
+        arms.append(arm)
+
+    # canonical order: by sort name, deduplicated. Preserves runtime
+    # behaviour while making ``int | str`` and ``str | int`` agree.
+    arms_by_sort = {_SCALARS[a][0]: a for a in arms}
+    sorted_sorts = sorted(arms_by_sort)
+    sort = "Union " + " ".join(_paren(s) for s in sorted_sorts)
+
+    def enc(v: FieldValue) -> Encoded:
+        # bool is an int subclass; check it first so ``True`` doesn't
+        # decode as ``1`` on the int arm.
+        for arm in (bool, *(a for a in arms if a is not bool)):
+            if arm in arms_by_sort.values() and isinstance(v, arm):
+                return json.dumps(v if not isinstance(v, bytes) else v.hex())
+        msg = f"value {v!r} did not match any arm of union {arms!r}"
+        raise TypeError(msg)
+
+    def dec(s: Encoded) -> FieldValue:
+        loaded = json.loads(s)
+        return _dispatch_union_arm(loaded, arms_by_sort)
+
+    def from_json(value: JsonValue) -> FieldValue:
+        return _dispatch_union_arm(value, arms_by_sort)
+
+    return TypeTranslation(
+        sort=sort,
+        encode=enc,
+        decode=dec,
+        inner_kind="scalar",
+        from_json=from_json,
+    )
+
+
+def _dispatch_union_arm(value: JsonValue, arms_by_sort: dict[str, type]) -> FieldValue:
+    """Pick the union arm whose Python type matches ``value`` and decode."""
+    arms = list(arms_by_sort.values())
+    # bool first (subclass of int)
+    if bool in arms and isinstance(value, bool):
+        return value
+    for arm in arms:
+        if arm is bool:
+            continue
+        if isinstance(value, arm):
+            # the matched scalar arm is a subset of FieldValue; the
+            # union narrowing on ``value`` keeps it as JsonValue so we
+            # cast at the boundary.
+            return cast("FieldValue", value)
+    msg = (
+        f"value {value!r} (type {type(value).__name__}) did not match any "
+        f"arm of union {arms!r}"
+    )
+    raise TypeError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -346,17 +419,28 @@ def _strip_optional(typ: TypeForm) -> tuple[TypeForm, bool]:
 def _expand_type_alias(typ: TypeForm) -> TypeForm:
     """Substitute concrete arguments through a PEP 695 type alias.
 
-    Given ``Foo[X, Y]`` where ``Foo`` is a ``TypeAliasType`` such as
-    ``type Foo[T, U] = Annotated[T, ..., U]``, return the alias's
-    ``__value__`` with each ``TypeVar`` replaced by the matching
-    argument. The didactic ``Embed`` and ``Ref`` aliases are the only
-    in-tree producers of this shape; non-alias inputs pass through
-    unchanged.
+    Two shapes are recognised:
+
+    1. ``Foo[X, Y]`` where ``Foo`` is a ``TypeAliasType`` such as
+       ``type Foo[T, U] = Annotated[T, ..., U]``. Returns the alias's
+       ``__value__`` with each ``TypeVar`` replaced by the matching
+       argument. The didactic ``Embed`` and ``Ref`` aliases are the
+       only in-tree producers of this shape.
+    2. A bare ``TypeAliasType`` such as ``type Kind = Literal["a","b"]``.
+       Returns the alias's ``__value__`` directly.
 
     Substitution walks one level of ``Annotated[...]`` and replaces type
     variables that appear either as the base type or anywhere in the
     metadata tuple. Other type-alias shapes are out of scope.
     """
+    # bare alias: ``type Kind = Literal[...]``. ``TypeAliasType`` falls
+    # outside the static ``TypeForm`` union (which only covers nominal
+    # ``type`` and ``UnionType``), so the isinstance check needs an
+    # ``object`` view of ``typ``.
+    if isinstance(cast("object", typ), TypeAliasType):
+        alias = cast("TypeAliasType", typ)
+        return cast("TypeForm", alias.__value__)
+    # parameterised alias: ``Foo[X, Y]``
     origin = get_origin(typ)
     if not isinstance(origin, TypeAliasType):
         return typ
@@ -668,6 +752,11 @@ def classify(typ: TypeForm) -> TypeTranslation:  # noqa: PLR0911
     # parameterised generics
     origin = get_origin(inner_type)
     args = get_args(inner_type)
+
+    # union of primitive scalars (e.g. ``int | str``); raw unions of
+    # non-primitives still raise via _classify_primitive_union below.
+    if origin in {Union, UnionType}:
+        return _classify_primitive_union(args)
 
     if origin is tuple:
         return _classify_tuple(args)
