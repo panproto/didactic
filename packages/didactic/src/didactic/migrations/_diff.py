@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    import panproto
 
     from didactic.models._model import Model
     from didactic.types._typing import JsonObject
@@ -114,17 +114,21 @@ def classify_change(old: type[Model], new: type[Model]) -> JsonObject:
     )
 
     # ``panproto.diff_and_classify`` accepts a third positional ``protocol``
-    # argument at runtime; the upstream stub still lists only two. Resolve
-    # the symbol dynamically to match the runtime arity, and treat the
-    # returned report as a ``CompatReport``-shaped object exposing
-    # ``to_dict()``.
+    # argument at runtime; the upstream stub still lists only two. Cast
+    # to a Protocol that exposes the runtime arity and return shape.
     class _CompatReportLike(Protocol):
         def to_dict(self) -> JsonObject: ...
 
-    diff_and_classify = cast(
-        "Callable[[object, object, object], _CompatReportLike]",
-        panproto.diff_and_classify,
-    )
+    class _DiffAndClassifyLike(Protocol):
+        def __call__(
+            self,
+            old: panproto.Schema,
+            new: panproto.Schema,
+            protocol: panproto.Protocol,
+            /,
+        ) -> _CompatReportLike: ...
+
+    diff_and_classify = cast("_DiffAndClassifyLike", panproto.diff_and_classify)
     compat = diff_and_classify(old_schema, new_schema, protocol)
     return compat.to_dict()
 
