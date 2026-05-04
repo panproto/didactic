@@ -4,9 +4,8 @@
 # private-API access on the marker layer to verify error paths.
 # Tracked in panproto/didactic#1; will be replaced with structural
 # Protocols in a v0.1.x patch.
-# pyright: reportArgumentType=false, reportUnhashable=false, reportPrivateUsage=false
 
-from typing import get_args, get_origin
+from typing import cast, get_args, get_origin
 
 import pytest
 
@@ -18,7 +17,7 @@ from didactic.fields._refs import (
     find_ref_marker,
 )
 from didactic.theory._theory import build_theory_spec
-from didactic.types._types import _expand_type_alias, classify, unwrap_annotated
+from didactic.types._types import classify, expand_type_alias, unwrap_annotated
 
 # -- Ref subscript shape ---------------------------------------------------
 
@@ -105,7 +104,7 @@ def test_order_construct_with_string_id() -> None:
 
 def test_order_construct_with_user_instance() -> None:
     u = User(id="u1")
-    o = Order(id="o1", user=u)
+    o = Order.model_validate({"id": "o1", "user": u})
     assert o.user == "u1"
 
 
@@ -132,7 +131,7 @@ def test_theory_spec_emits_ref_as_edge() -> None:
     spec = build_theory_spec(Order)
     # Ref fields produce an edge op directly to the target sort, not a
     # constraint-sort + accessor pair
-    sort_names = {s["name"] for s in spec["sorts"]}
+    sort_names = {cast("str", s["name"]) for s in spec["sorts"]}
     assert "Order_user" not in sort_names  # no constraint sort for the Ref
     op_by_name = {op["name"]: op for op in spec["ops"]}
     # the output is a panproto SortExpr in untagged form: a bare string
@@ -142,7 +141,7 @@ def test_theory_spec_emits_ref_as_edge() -> None:
 
 def test_theory_spec_keeps_scalar_fields_as_constraints() -> None:
     spec = build_theory_spec(Order)
-    sort_names = {s["name"] for s in spec["sorts"]}
+    sort_names = {cast("str", s["name"]) for s in spec["sorts"]}
     # the `id: str` field should still get a constraint sort
     assert "Order_id" in sort_names
 
@@ -180,6 +179,6 @@ def test_ref_origin_is_annotated() -> None:
     # the alias, the underlying form is ``Annotated[str, ...]`` and the
     # base type is ``str``.
     assert get_origin(ann) is not None
-    expanded = _expand_type_alias(ann)
+    expanded = expand_type_alias(ann)
     base, _ = unwrap_annotated(expanded)
     assert base is str

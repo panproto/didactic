@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     import didactic.api as dx
     from fastapi import FastAPI
 
-
 # cache the conversion so each Model maps to the same Pydantic class
 _CACHE: dict[type, type] = {}
 

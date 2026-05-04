@@ -1,7 +1,6 @@
 # ``annotated_metadata`` lives on ``spec.extras`` as ``Opaque`` and
 # the per-marker iteration takes the marker as an opaque value to
 # duck-type. Tracked in panproto/didactic#1.
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
 """JSON Schema (Draft 2020-12) generation from a Model class.
 
 The single user-facing entry point is
@@ -147,7 +146,13 @@ def _schema_for_field(spec: FieldSpec) -> JsonSchemaProperty:
     annotation = spec.annotation
     out: dict[str, JsonValue] = {}
 
-    type_str, format_str = _PRIMITIVE_TYPE_MAP.get(annotation, ("string", None))
+    # The map is keyed on bare ``type`` instances (``str``, ``int``,
+    # etc.); ``TypeVar`` / ``ForwardRef`` annotations fall through to
+    # the ``("string", None)`` default.
+    if isinstance(annotation, type):
+        type_str, format_str = _PRIMITIVE_TYPE_MAP.get(annotation, ("string", None))
+    else:
+        type_str, format_str = "string", None
     out["type"] = type_str
     if format_str is not None:
         out["format"] = format_str
@@ -174,7 +179,7 @@ def _schema_for_field(spec: FieldSpec) -> JsonSchemaProperty:
     # as ``Opaque`` (a marker Protocol); we narrow with isinstance.
     metadata = extras.get("annotated_metadata", ()) or ()
     if isinstance(metadata, (tuple, list)):
-        for entry in metadata:
+        for entry in cast("tuple[Opaque, ...] | list[Opaque]", metadata):
             _apply_annotated_constraint(out, entry)
 
     return cast("JsonSchemaProperty", out)

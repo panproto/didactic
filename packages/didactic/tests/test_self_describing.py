@@ -2,14 +2,16 @@
 
 # Test passes a ``dict[str, str]`` to ``validate_with_uri_lookup``
 # whose signature is ``JsonObject``; the runtime accepts the subtype.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false
-
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
 import didactic.api as dx
+
+if TYPE_CHECKING:
+    from didactic.types._typing import JsonObject
 
 
 class SDUser(dx.Model):
@@ -103,6 +105,6 @@ def test_validate_missing_schema_key_raises() -> None:
 
 def test_validate_unknown_uri_raises() -> None:
     reg = dx.FingerprintRegistry()
-    payload = {"$schema": "didactic://v1/" + "0" * 64, "id": "u1"}
+    payload: JsonObject = {"$schema": "didactic://v1/" + "0" * 64, "id": "u1"}
     with pytest.raises(LookupError, match="no registered model"):
         dx.validate_with_uri_lookup(payload, reg)

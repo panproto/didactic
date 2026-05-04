@@ -5,7 +5,6 @@
 # accepts string forward refs and TypeVar instances), but pyright
 # can't follow the case split through the dataclass_transform
 # layer. Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false, reportReturnType=false, reportCallIssue=false
 """The ``ModelMeta`` metaclass: class-as-Theory derivation.
 
 ``ModelMeta`` runs at class-creation time. It reads each annotated field,
@@ -33,7 +32,7 @@ from __future__ import annotations
 import annotationlib
 import contextlib
 import sys
-from typing import TYPE_CHECKING, ForwardRef, TypeVar, dataclass_transform
+from typing import TYPE_CHECKING, ForwardRef, TypeVar, cast, dataclass_transform
 
 from didactic.axioms._axioms import collect_class_axioms
 from didactic.fields._computed import computed_field_names
@@ -44,10 +43,12 @@ from didactic.fields._fields import (
     field,
     read_annotated_metadata,
 )
-from didactic.models._config import DEFAULT_CONFIG, ModelConfig
-from didactic.types._types import classify
+from didactic.models._config import DEFAULT_CONFIG, ExtraPolicy, ModelConfig
+from didactic.types._types import TypeForm, classify
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import panproto
 
     from didactic.axioms._axioms import Axiom
@@ -222,8 +223,14 @@ def _build_field_spec(
             default=raw_default if not isinstance(raw_default, Field) else MISSING,
             usage_mode="readwrite",
         )
-    translation = classify(annotation)
-    annotated_meta = read_annotated_metadata(annotation)
+    # Above branches return for ``TypeVar`` / ``ForwardRef`` cases; the
+    # remaining annotation is a real ``TypeForm`` (a class, ``UnionType``,
+    # ``TypeAliasType``, ``GenericAlias``, or an ``Annotated`` form). Cast
+    # to drop the residual ``TypeVar | ForwardRef`` arms from pyright's
+    # view.
+    type_form = cast("TypeForm", annotation)
+    translation = classify(type_form)
+    annotated_meta = read_annotated_metadata(type_form)
 
     # default & metadata sourced from a Field instance, if present
     if isinstance(raw_default, Field):
@@ -307,11 +314,13 @@ class ModelMeta(type):
             [build_theory][didactic.theory._theory.build_theory]; cached
             thereafter. Subsequent accesses return the same object.
         """
-        if cls.__dict__.get("__theory_cache__") is None:
+        cached = cls.__dict__.get("__theory_cache__")
+        if cached is None:
             from didactic.theory._theory import build_theory  # noqa: PLC0415
 
-            cls.__theory_cache__ = build_theory(cls)
-        return cls.__theory_cache__
+            cached = build_theory(cls)
+            cls.__theory_cache__ = cached
+        return cached
 
     # config keys we accept on the class header.
     # e.g. ``class Foo(dx.Model, extra="forbid"): ...``
@@ -368,7 +377,7 @@ class ModelMeta(type):
 
     @staticmethod
     def _resolve_config(
-        target: type, header_overrides: dict[str, JsonValue]
+        target: type, header_overrides: Mapping[str, Opaque]
     ) -> ModelConfig:
         """Pick the ModelConfig for a class.
 
@@ -413,16 +422,22 @@ class ModelMeta(type):
         if not header_overrides:
             return explicit
 
-        # apply overrides via dataclasses.replace-shaped construction
-        merged_kwargs = {
-            "extra": explicit.extra,
-            "strict": explicit.strict,
-            "populate_by_name": explicit.populate_by_name,
-            "title": explicit.title,
-            "description": explicit.description,
-        }
-        merged_kwargs.update(header_overrides)
-        return ModelConfig(**merged_kwargs)
+        # apply overrides via dataclasses.replace-shaped construction. The
+        # ``header_overrides`` mapping is keyed on a known small set
+        # (``_CONFIG_HEADER_KEYS``); each value is taken at face value and
+        # validated by ``ModelConfig.__post_init__`` rather than statically.
+        def _pick(key: str, fallback: Opaque) -> Opaque:
+            return header_overrides.get(key, fallback)
+
+        return ModelConfig(
+            extra=cast("ExtraPolicy", _pick("extra", explicit.extra)),
+            strict=cast("bool", _pick("strict", explicit.strict)),
+            populate_by_name=cast(
+                "bool", _pick("populate_by_name", explicit.populate_by_name)
+            ),
+            title=cast("str | None", _pick("title", explicit.title)),
+            description=cast("str | None", _pick("description", explicit.description)),
+        )
 
     @staticmethod
     def collect_field_specs(target: type) -> dict[str, FieldSpec]:

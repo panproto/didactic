@@ -7,16 +7,14 @@ and bare strings are accepted as ``__axioms__`` entries.
 """
 
 # Test class is registered via ``@dx.axiom`` decorator side effect.
-# Tracked in panproto/didactic#1.
-# pyright: reportUnusedClass=false
-
 from __future__ import annotations
+
+from typing import cast
 
 import pytest
 
 import didactic.api as dx
 from didactic.axioms._axioms import collect_class_axioms
-
 
 # -- axiom() constructor -----------------------------------------------
 
@@ -84,7 +82,11 @@ def test_axioms_reject_unknown_types() -> None:
 
         class Bad(dx.Model):
             x: int
-            __axioms__ = [42]  # type: ignore[list-item]
+            # ``cast`` smuggles a non-Axiom value past the static type
+            # to exercise the runtime rejection path.
+            __axioms__ = cast("list[dx.Axiom]", [42])
+
+        assert Bad is not None  # registration is the test
 
 
 # -- inheritance -------------------------------------------------------

@@ -4,7 +4,6 @@
 # ``unwrap_annotated``; the static ``TypeForm`` alias doesn't
 # include ``Annotated`` (a typing special form, not a class), but
 # the runtime accepts it. Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false
 
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ from annotated_types import Ge, Le, MaxLen, MinLen
 from didactic.types._types import TypeNotSupportedError, classify, unwrap_annotated
 
 if TYPE_CHECKING:
+    from didactic.types._types import TypeForm
     from didactic.types._typing import FieldValue
 
 
@@ -169,19 +169,19 @@ def test_mixed_literal_rejected() -> None:
 
 
 def test_annotated_int() -> None:
-    t = classify(Annotated[int, Ge(0), Le(127)])
+    t = classify(cast("TypeForm", Annotated[int, Ge(0), Le(127)]))
     assert t.sort == "Int"
     assert t.decode(t.encode(50)) == 50
 
 
 def test_annotated_str_with_length_bounds() -> None:
-    t = classify(Annotated[str, MinLen(1), MaxLen(10)])
+    t = classify(cast("TypeForm", Annotated[str, MinLen(1), MaxLen(10)]))
     assert t.sort == "String"
     assert t.decode(t.encode("hello")) == "hello"
 
 
 def test_unwrap_annotated() -> None:
-    base, meta = unwrap_annotated(Annotated[int, Ge(0)])
+    base, meta = unwrap_annotated(cast("TypeForm", Annotated[int, Ge(0)]))
     assert base is int
     assert len(meta) == 1
 
@@ -302,7 +302,7 @@ def test_recursive_json_alias_round_trips_primitives() -> None:
 def test_recursive_json_alias_round_trips_nested_dict() -> None:
     t = classify(_JsonValue)
     src: object = {"a": 1, "b": {"c": [1, 2, 3], "d": None}, "e": True}
-    decoded = t.decode(t.encode(src))
+    decoded = t.decode(t.encode(cast("FieldValue", src)))
     # lists become tuples on decode (FieldValue is tuple-based, not list)
     assert decoded == {"a": 1, "b": {"c": (1, 2, 3), "d": None}, "e": True}
 
@@ -317,12 +317,12 @@ def test_recursive_json_alias_tuple_round_trips_as_tuple() -> None:
 def test_recursive_json_alias_inside_dict_value() -> None:
     t = classify(dict[str, _JsonValue])
     src: dict[str, object] = {"k": [1, {"nested": "v"}]}
-    decoded = t.decode(t.encode(src))
+    decoded = t.decode(t.encode(cast("FieldValue", src)))
     assert decoded == {"k": (1, {"nested": "v"})}
 
 
 def test_recursive_json_alias_optional() -> None:
-    t = classify(_JsonValue | None)
+    t = classify(cast("TypeForm", _JsonValue | None))
     assert t.is_optional
     assert t.decode(t.encode(None)) is None
     assert t.decode(t.encode({"a": 1})) == {"a": 1}
@@ -439,7 +439,7 @@ def test_model_ref_alias_round_trips_single_model() -> None:
 def test_model_ref_alias_round_trips_list_of_models() -> None:
     t = classify(_Component)
     src = [_Heading(text="A"), _Paragraph(text="B"), _Heading(text="C")]
-    decoded = t.decode(t.encode(src))
+    decoded = t.decode(t.encode(cast("FieldValue", src)))
     # lists round-trip as tuples (FieldValue invariant)
     assert decoded == (
         _Heading(text="A"),
@@ -456,7 +456,7 @@ def test_model_ref_alias_dict_with_mixed_arms() -> None:
         "count": 7,
         "tags": ["a", "b"],
     }
-    decoded = t.decode(t.encode(src))
+    decoded = t.decode(t.encode(cast("FieldValue", src)))
     assert decoded == {
         "title": _Heading(text="Doc", level=1),
         "intro": _Paragraph(text="Welcome"),
@@ -468,7 +468,7 @@ def test_model_ref_alias_dict_with_mixed_arms() -> None:
 def test_model_ref_alias_nested_model_in_dict_in_list() -> None:
     t = classify(_Component)
     src = [{"item": _Paragraph(text="nested")}]
-    decoded = t.decode(t.encode(src))
+    decoded = t.decode(t.encode(cast("FieldValue", src)))
     assert decoded == ({"item": _Paragraph(text="nested")},)
 
 
@@ -521,7 +521,7 @@ def test_model_ref_alias_cycle_raises() -> None:
     inner: dict[str, object] = {"a": 1}
     inner["self"] = inner
     with pytest.raises((RecursionError, ValueError)):
-        t.encode(inner)
+        t.encode(cast("FieldValue", inner))
 
 
 def test_model_ref_alias_works_as_model_field() -> None:

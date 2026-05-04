@@ -3,12 +3,10 @@
 # Test calls a Model with the field name when the test's Model
 # declares an alias; pyright reads the alias as the parameter name
 # while the runtime accepts both. Tracked in panproto/didactic#1.
-# pyright: reportCallIssue=false
 
 from __future__ import annotations
 
 import didactic.api as dx
-
 
 # -- model_dump options ----------------------------------------------
 
@@ -49,7 +47,7 @@ def test_model_dump_by_alias() -> None:
         user_id: str = dx.field(alias="userId")
         email: str
 
-    m = M(user_id="u1", email="a@b.c")
+    m = M.model_validate({"user_id": "u1", "email": "a@b.c"})
     assert m.model_dump(by_alias=True) == {"userId": "u1", "email": "a@b.c"}
     assert m.model_dump(by_alias=False) == {"user_id": "u1", "email": "a@b.c"}
 

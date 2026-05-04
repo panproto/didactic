@@ -1,15 +1,7 @@
 """Tests for ``dx.Embed[T]`` sub-vertex composition."""
 
-# Tests subscript ``model_dump()`` results (recursive ``FieldValue``
-# union) and pass intentional wrong-type arguments to verify
-# validation error paths. The chained-subscript narrowing and the
-# negative-test argument types are noise; the runtime behaviour is
-# what's under test. Tracked in panproto/didactic#1 for a structural
-# fix (TypedDict for ``model_dump`` shape, Protocol for the negative
-# test path).
-# pyright: reportArgumentType=false, reportCallIssue=false, reportIndexIssue=false, reportOptionalSubscript=false, reportUnhashable=false
-
 import pickle
+from typing import cast
 
 import pytest
 
@@ -54,8 +46,10 @@ def test_construct_with_embedded_instance() -> None:
 
 
 def test_embed_rejects_non_target_class() -> None:
+    # model_validate's signature accepts JsonValue, so a bare string
+    # can be supplied at the boundary; the validator then rejects it.
     with pytest.raises(dx.ValidationError) as exc:
-        Person(id="p1", name="Alice", home="not an Address")
+        Person.model_validate({"id": "p1", "name": "Alice", "home": "not an Address"})
     assert any(e.type == "type_error" for e in exc.value.entries)
 
 
@@ -63,8 +57,11 @@ def test_embed_rejects_wrong_model_type() -> None:
     class Other(dx.Model):
         x: str
 
+    other = Other(x="hi")
     with pytest.raises(dx.ValidationError):
-        Person(id="p1", name="Alice", home=Other(x="hi"))
+        # model_validate accepts JsonValue / FieldValue, including
+        # a Model from a different class (which the validator rejects).
+        Person.model_validate({"id": "p1", "name": "Alice", "home": other})
 
 
 # -- with_ ---------------------------------------------------------------
@@ -87,8 +84,10 @@ def test_dict_round_trip() -> None:
     p = Person(id="p1", name="Alice", home=Address(line1="1 Main", city="Town"))
     payload = p.model_dump()
     # the embedded model's fields appear nested under the field name
-    assert payload["home"]["line1"] == "1 Main"
-    assert payload["home"]["city"] == "Town"
+    home = payload["home"]
+    assert isinstance(home, dict)
+    assert home["line1"] == "1 Main"
+    assert home["city"] == "Town"
     # round-trip
     p2 = Person.model_validate(payload)
     assert p == p2
@@ -139,7 +138,9 @@ def test_theory_spec_emits_embed_as_edge_to_target_sort() -> None:
 
 def test_theory_spec_no_constraint_sort_for_embed() -> None:
     spec = build_theory_spec(Person)
-    sort_names = {s["name"] for s in spec["sorts"]}
+    # Sort names live on each sort dict's "name" key as a string;
+    # narrow at the boundary so the set comprehension type-checks.
+    sort_names = {cast("str", s["name"]) for s in spec["sorts"]}
     # Embed fields don't get their own constraint sort
     assert "Person_home" not in sort_names
 

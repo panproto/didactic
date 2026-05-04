@@ -43,9 +43,6 @@ didactic.Model : the input class.
 
 # Local PEP 695 type alias inside a function body and a heterogeneous
 # kwargs dict for the dynamic-pydantic-Field construction.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false, reportGeneralTypeIssues=false
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, cast
@@ -58,8 +55,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from didactic.fields._fields import FieldSpec
-    from didactic.types._typing import FieldValue
+    from didactic.types._typing import FieldValue, Opaque
     from pydantic.fields import FieldInfo
+
+    type _FieldKwargValue = (
+        FieldValue | Callable[[], FieldValue] | dict[str, FieldValue] | list[FieldValue]
+    )
 
 
 def to_pydantic(
@@ -113,12 +114,15 @@ def to_pydantic(
     """
     # static type already says ``type[dx.Model]``; the runtime check
     # catches users who bypass type-checking and hand in a non-Model.
-    if not (isinstance(dx_cls, type) and issubclass(dx_cls, dx.Model)):  # pyright: ignore[reportUnnecessaryIsInstance]
+    # Cast to ``Opaque`` so pyright does not mark the runtime guard as
+    # redundant.
+    probe = cast("Opaque", dx_cls)
+    if not (isinstance(probe, type) and issubclass(probe, dx.Model)):
         msg = f"to_pydantic requires a didactic.Model subclass; got {dx_cls!r}"
         raise TypeError(msg)
 
     target_name = name or dx_cls.__name__
-    fields: dict[str, tuple[type, FieldInfo]] = {}
+    fields: dict[str, tuple[Opaque, FieldInfo]] = {}
 
     for fname, spec in dx_cls.__field_specs__.items():
         if spec.usage_mode != "readwrite":
@@ -149,7 +153,7 @@ def to_pydantic(
     )
 
 
-def _annotation_with_axioms(spec: FieldSpec) -> type:
+def _annotation_with_axioms(spec: FieldSpec) -> Opaque:
     """Reconstruct an ``Annotated[T, ...]`` annotation including axiom metadata.
 
     Parameters
@@ -175,7 +179,7 @@ def _annotation_with_axioms(spec: FieldSpec) -> type:
     """
     metadata = spec.extras.get("annotated_metadata", ())
     if metadata:
-        return Annotated[spec.annotation, *metadata]  # type: ignore[valid-type]
+        return Annotated[spec.annotation, *cast("tuple[Opaque, ...]", metadata)]
     return spec.annotation
 
 
@@ -193,14 +197,11 @@ def _to_pydantic_field(spec: FieldSpec) -> FieldInfo:
         A Pydantic ``FieldInfo`` produced by ``pydantic.Field(...)``.
     """
     # Pydantic's ``Field`` accepts a heterogeneous mix of native types
-    # (str, bool, FieldValue defaults, callables, dicts) for its many
-    # named keywords. The kwarg dict's value type is therefore the
+    # (str, bool, FieldValue defaults, callables, dicts, lists) for its
+    # many named keywords. The kwarg dict's value type is therefore the
     # union of all those, expressed as ``FieldValue`` plus
-    # ``Callable``/``dict`` and explicitly admitted at each assignment
-    # site below.
-    type _FieldKwargValue = (
-        FieldValue | Callable[[], FieldValue] | dict[str, FieldValue]
-    )
+    # ``Callable``/``dict``/``list`` and explicitly admitted at each
+    # assignment site below.
     kwargs: dict[str, _FieldKwargValue] = {}
 
     if spec.default is not MISSING:

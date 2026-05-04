@@ -5,7 +5,6 @@
 # can't narrow each kwarg-value to its own ``Literal`` parameter
 # without per-key conditionals. Both are noise; tracked in
 # panproto/didactic#1.
-# pyright: reportArgumentType=false, reportCallIssue=false, reportReturnType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 """Settings sources and the ``Settings`` base class.
 
 A ``Settings`` subclass declares fields like a regular
@@ -21,20 +20,20 @@ didactic.Model : the base from which Settings inherits all field machinery.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Self
+from typing import TYPE_CHECKING, ClassVar, Self, cast
 
 import didactic.api as dx
 
 if TYPE_CHECKING:
-    import argparse
     from collections.abc import Mapping, Sequence
 
     from didactic.fields._fields import FieldSpec
-    from didactic.types._typing import FieldValue, JsonObject
+    from didactic.types._typing import FieldValue, JsonObject, JsonValue, Opaque
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +41,14 @@ class _Source:
     """Base class marker for settings sources."""
 
     name: str
+
+    def fetch(self, fields: Sequence[str]) -> JsonObject:
+        """Return ``{field: value}`` for each field this source supplies.
+
+        Subclasses override; the base raises to flag a misconfigured source.
+        """
+        msg = f"{type(self).__name__} does not implement fetch()"
+        raise NotImplementedError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,15 +146,17 @@ class FileSource(_Source):
 
             data = tomllib.loads(text)
         elif suffix in (".yaml", ".yml"):
+            import importlib  # noqa: PLC0415
+
             try:
-                import yaml  # noqa: PLC0415  # type: ignore[import-not-found]
+                yaml_mod = importlib.import_module("yaml")
             except ImportError as exc:  # pragma: no cover
                 msg = (
                     "FileSource cannot load YAML files without the optional "
                     "`yaml` extra; install didactic-settings[yaml]"
                 )
                 raise ImportError(msg) from exc
-            data = yaml.safe_load(text)
+            data = cast("Opaque", yaml_mod.safe_load(text))
         else:
             msg = f"unsupported FileSource suffix: {suffix!r}"
             raise ValueError(msg)
@@ -155,7 +164,14 @@ class FileSource(_Source):
             kind = type(data).__name__
             msg = f"FileSource expects a top-level mapping; got {kind}"
             raise TypeError(msg)
-        return {k: v for k, v in data.items() if k in fields}
+        # Each loader (``json.loads``, ``tomllib.loads``, ``yaml.safe_load``)
+        # returns an opaque mapping at the type level; the values are
+        # ``JsonValue``-shaped at runtime and forwarded as such.
+        raw_dict = cast("dict[Opaque, Opaque]", data)
+        typed_data: dict[str, JsonValue] = {
+            str(k): cast("JsonValue", v) for k, v in raw_dict.items()
+        }
+        return {k: v for k, v in typed_data.items() if k in fields}
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,8 +197,18 @@ class CliSource(_Source):
         """Return ``{field: value}`` from the args mapping."""
         if self.args is None:
             return {}
-        data = vars(self.args) if hasattr(self.args, "__dict__") else dict(self.args)
-        return {k: v for k, v in data.items() if k in fields and v is not None}
+        # ``argparse.Namespace`` exposes its values via ``vars`` (``__dict__``);
+        # plain mappings go through ``dict``. Either path lands at a
+        # ``dict[str, object]`` view with JSON-shaped values.
+        if isinstance(self.args, argparse.Namespace):
+            raw_items: dict[str, Opaque] = vars(self.args)
+        else:
+            raw_items = {str(k): v for k, v in self.args.items()}
+        return {
+            k: cast("JsonValue", v)
+            for k, v in raw_items.items()
+            if k in fields and v is not None
+        }
 
 
 class Settings(dx.Model):
@@ -215,9 +241,14 @@ class Settings(dx.Model):
     __sources__: ClassVar[tuple[_Source, ...]] = ()
 
     # Per-instance attribute set by ``load`` via ``object.__setattr__``;
-    # the annotation here is for type-checkers only (the leading-
-    # underscore name is skipped by the metaclass's field walker).
-    __provenance__: dict[str, str]
+    # declared here at runtime (not as an annotation) so the
+    # ``dataclass_transform`` metaclass does not see it as a Model field.
+    if TYPE_CHECKING:
+
+        @property
+        def __provenance__(self) -> dict[str, str]:
+            """Per-instance source map; populated by ``load``."""
+            ...
 
     @classmethod
     def load(cls, **overrides: FieldValue) -> Self:
@@ -240,7 +271,7 @@ class Settings(dx.Model):
         provenance: dict[str, str] = {}
 
         for source in cls.__sources__:
-            chunk = source.fetch(field_names)  # type: ignore[attr-defined]
+            chunk = source.fetch(field_names)
             for k, v in chunk.items():
                 merged[k] = _coerce_value(v, cls.__field_specs__[k])
                 provenance[k] = source.name
@@ -259,7 +290,7 @@ class Settings(dx.Model):
         return instance
 
 
-def _coerce_value(raw: FieldValue, spec: FieldSpec) -> FieldValue:
+def _coerce_value(raw: JsonValue, spec: FieldSpec) -> FieldValue:
     """Coerce string values from env / dotenv / cli into the spec's type.
 
     Notes
@@ -279,7 +310,12 @@ def _coerce_value(raw: FieldValue, spec: FieldSpec) -> FieldValue:
             return int(raw)
         if annotation is float:
             return float(raw)
-    return raw
+    # Non-string ``JsonValue`` payloads (booleans, numbers, nested
+    # mappings / lists from JSON / TOML / YAML) are forwarded as-is. The
+    # ``FieldValue`` union and the ``JsonValue`` union overlap on every
+    # primitive shape and on nested dicts; ``list[...]`` arms are
+    # converted to tuples downstream by the field translation.
+    return cast("FieldValue", raw)
 
 
 __all__ = [

@@ -23,9 +23,6 @@ didactic.models._storage : the pluggable storage backend.
 
 # ``__init__(**kwargs: FieldValue | JsonValue)`` accepts JSON-shape
 # dicts but pyright doesn't carry the union through ``_encode_field``.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false
-
 from __future__ import annotations
 
 import json
@@ -136,7 +133,7 @@ class Model(metaclass=ModelMeta):
                 value = default
 
             try:
-                encoded_value = _encode_field(spec, value)
+                encoded_value = _encode_field(spec, cast("FieldValue", value))
             except (TypeError, ValueError) as exc:
                 errors.append(
                     ValidationErrorEntry(

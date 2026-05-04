@@ -27,12 +27,9 @@ Examples
 
 # ``TypeAdapter`` round-trips a generic ``T`` through the field
 # translation layer; pyright doesn't bind ``T`` to ``FieldValue``.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from didactic.models._model import Model
 
@@ -109,13 +106,16 @@ class TypeAdapter[T]:
             If the value cannot be coerced to the target type.
         """
         encoded = self._translation.encode(value)
-        return self._translation.decode(encoded)  # type: ignore[no-any-return]
+        return cast("T", self._translation.decode(encoded))
 
     def dump_json(self, value: T) -> str:
         """Encode ``value`` to a JSON string."""
         import json  # noqa: PLC0415
 
-        return json.dumps(self._translation.encode(value))
+        # ``T`` is unconstrained at the API surface; the translation
+        # accepts any ``FieldValue`` shape at runtime, so we cast at the
+        # boundary rather than constrain ``T``.
+        return json.dumps(self._translation.encode(cast("FieldValue", value)))
 
 
 __all__ = [

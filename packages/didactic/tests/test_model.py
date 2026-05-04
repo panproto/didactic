@@ -10,7 +10,6 @@ test module (``test_model_legacy.py``) exercises the future-import path.
 # Tests use ``Model.__class__(name, bases, namespace)`` to dynamically
 # construct Model subclasses; pyright can't follow the metaclass
 # invocation. Tracked in panproto/didactic#1.
-# pyright: reportCallIssue=false, reportAttributeAccessIssue=false
 
 from typing import Annotated
 
@@ -80,19 +79,19 @@ def test_construct_with_default_overridden() -> None:
 
 def test_missing_required_raises_validation_error() -> None:
     with pytest.raises(dx.ValidationError) as exc:
-        User(id="u1")
+        User.model_validate({"id": "u1"})
     assert any(e.type == "missing_required" for e in exc.value.entries)
 
 
 def test_unknown_field_raises_validation_error() -> None:
     with pytest.raises(dx.ValidationError) as exc:
-        User(id="u1", email="a@b.c", bogus="x")
+        User.model_validate({"id": "u1", "email": "a@b.c", "bogus": "x"})
     assert any(e.type == "extra_field" for e in exc.value.entries)
 
 
 def test_multiple_errors_collected() -> None:
     with pytest.raises(dx.ValidationError) as exc:
-        User(bogus="x")
+        User.model_validate({"bogus": "x"})
     types = {e.type for e in exc.value.entries}
     # both missing-required and extra-field surface
     assert "missing_required" in types
@@ -114,7 +113,10 @@ def test_attribute_lookup_unknown() -> None:
 def test_models_are_frozen() -> None:
     u = User(id="u1", email="a@b.c")
     with pytest.raises(AttributeError):
-        u.email = "other@example.com"
+        # Direct attribute write is rejected by the frozen ``__setattr__``
+        # guard. Going through the builtin sidesteps the model's typed
+        # interface, which is what we want to assert is also rejected.
+        setattr(u, "email", "other@example.com")  # noqa: B010
 
 
 def test_with_returns_new_instance() -> None:

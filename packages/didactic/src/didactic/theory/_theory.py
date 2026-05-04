@@ -341,13 +341,13 @@ def build_theory(cls: type) -> panproto.Theory:
     ``panproto``. Doing it lazily lets the rest of the package be
     authored and unit-tested without panproto installed.
     """
-    from didactic._panproto_compat import create_theory  # noqa: PLC0415
+    import panproto  # noqa: PLC0415
 
     parents = _model_parents(cls)
     if len(parents) <= 1:
         # single (or no) Model inheritance: the flat spec is correct
         spec = build_theory_spec(cls)
-        return create_theory(spec)
+        return panproto.create_theory(spec)
 
     # multiple Model inheritance: compute the colimit of the parent
     # theories over their lowest common ancestor in the Model lineage
@@ -430,26 +430,25 @@ def _build_colimit_theory(cls: type, parents: list[type]) -> panproto.Theory:
     The result for ``class D(A, B, C)`` is
     ``colimit(colimit(A, B, lca(A, B)), C, lca(...))``.
     """
-    from didactic._panproto_compat import (  # noqa: PLC0415
-        colimit_theories,
-        create_theory,
-    )
+    import panproto  # noqa: PLC0415
 
-    accumulator = create_theory(build_theory_spec(parents[0]))
+    accumulator = panproto.create_theory(build_theory_spec(parents[0]))
     accumulator_cls: type = parents[0]
 
     for parent in parents[1:]:
         ancestor = _lowest_common_model_ancestor([accumulator_cls, parent])
-        ancestor_theory = create_theory(build_theory_spec(ancestor))
-        next_theory = create_theory(build_theory_spec(parent))
-        accumulator = colimit_theories(accumulator, next_theory, ancestor_theory)
+        ancestor_theory = panproto.create_theory(build_theory_spec(ancestor))
+        next_theory = panproto.create_theory(build_theory_spec(parent))
+        accumulator = panproto.colimit_theories(
+            accumulator, next_theory, ancestor_theory
+        )
         accumulator_cls = parent
 
     # finally fold in any cls-only fields by colimiting against the
     # immediate spec of cls; the shared ancestor is the accumulated
     # theory we just built
-    cls_theory = create_theory(build_theory_spec(cls))
-    return colimit_theories(accumulator, cls_theory, accumulator)
+    cls_theory = panproto.create_theory(build_theory_spec(cls))
+    return panproto.colimit_theories(accumulator, cls_theory, accumulator)
 
 
 __all__ = [

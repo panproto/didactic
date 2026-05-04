@@ -51,9 +51,6 @@ didactic.theory._theory : the bridge that will compile lenses to panproto.Lens.
 
 # ``lens`` doubles as a callable and a namespace (``dx.lens.identity``);
 # the namespace attributes are stamped on the function object.
-# Tracked in panproto/didactic#1.
-# pyright: reportAttributeAccessIssue=false
-
 from __future__ import annotations
 
 import functools
@@ -69,7 +66,6 @@ from didactic.types._typing import Opaque
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
 
 # ---------------------------------------------------------------------------
 # Mapping (one-way)
@@ -377,11 +373,18 @@ class _LensNamespace:
     ``dx.lens.Lens``, ``dx.lens.Iso``, ``dx.lens.Mapping``).
     """
 
+    identity: Callable[..., Iso[Opaque, Opaque]]
+    Lens: type[Lens[Opaque, Opaque, Opaque]]
+    Iso: type[Iso[Opaque, Opaque]]
+    Mapping: type[Mapping[Opaque, Opaque]]
+
     def __init__(self) -> None:
-        self.identity: Callable[..., Iso[Opaque, Opaque]] = identity
-        self.Lens: type[Lens[Opaque, Opaque, Opaque]] = Lens
-        self.Iso: type[Iso[Opaque, Opaque]] = Iso
-        self.Mapping: type[Mapping[Opaque, Opaque]] = Mapping
+        # ``identity`` is parameterised on ``A``; the namespace exposes the
+        # erased ``Opaque, Opaque`` shape since callers re-bind on use.
+        self.identity = cast("Callable[..., Iso[Opaque, Opaque]]", identity)
+        self.Lens = Lens
+        self.Iso = Iso
+        self.Mapping = Mapping
 
     def __call__[A, B](
         self, source: type[A], target: type[B]
@@ -433,7 +436,6 @@ class _LensNamespace:
 
 
 lens = _LensNamespace()
-
 
 __all__ = [
     "Iso",

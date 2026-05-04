@@ -2,8 +2,7 @@
 
 # Test class is registered via metaclass side effect; the local name is
 # deliberately discarded.
-# Tracked in panproto/didactic#1.
-# pyright: reportUnusedClass=false
+from typing import cast
 
 import pytest
 
@@ -69,8 +68,12 @@ def test_invalid_attribute_type_rejected() -> None:
     with pytest.raises(TypeError, match="must be a ModelConfig"):
 
         class Bad(dx.Model):
-            __model_config__ = "not a config"  # type: ignore[assignment]
+            # ``cast`` smuggles a non-ModelConfig value past the static
+            # type so the runtime guard fires.
+            __model_config__ = cast("dx.ModelConfig", "not a config")
             id: str
+
+        assert Bad is not None  # registration is the test
 
 
 def test_inheritance_carries_config() -> None:

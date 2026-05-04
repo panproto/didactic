@@ -15,7 +15,6 @@ from didactic.settings import (
     Settings,
 )
 
-
 # -- env source -------------------------------------------------------
 
 

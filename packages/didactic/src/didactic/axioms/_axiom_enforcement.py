@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from didactic.axioms._axioms import Axiom
     from didactic.types._typing import FieldValue, JsonValue
 
-
 # A panproto Expr ``to_dict()`` AST node is one of any JsonValue-shaped
 # payload — at the leaves of dispatch we narrow with ``match`` /
 # ``isinstance``. Using ``JsonValue`` (rather than the narrower

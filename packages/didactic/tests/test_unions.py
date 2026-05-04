@@ -3,7 +3,6 @@
 # Test classes inside test functions are registered via the
 # ``TaggedUnion`` metaclass side effect; the local name is "unused"
 # from a pyright POV. Tracked in panproto/didactic#1.
-# pyright: reportUnusedClass=false
 
 from typing import Literal
 
@@ -116,10 +115,14 @@ def test_duplicate_discriminator_value_rejected() -> None:
     class Bark(Sound):
         kind: Literal["bark"]
 
+    assert Bark is not None  # registration side effect
+
     with pytest.raises(TypeError, match="already registered"):
 
         class Bark2(Sound):
             kind: Literal["bark"]
+
+        assert Bark2 is not None  # registration is the test; class drops out
 
 
 def test_variant_must_have_discriminator_field() -> None:
@@ -131,6 +134,8 @@ def test_variant_must_have_discriminator_field() -> None:
         class WithoutSpecies(Animal):
             name: str
 
+        assert WithoutSpecies is not None  # registration is the test
+
 
 def test_variant_discriminator_must_be_literal() -> None:
     class Mode(dx.TaggedUnion, discriminator="kind"):
@@ -140,6 +145,8 @@ def test_variant_discriminator_must_be_literal() -> None:
 
         class Bad(Mode):
             kind: str
+
+        assert Bad is not None  # registration is the test
 
 
 # -- isolated registries between unions ------------------------------

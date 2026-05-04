@@ -3,7 +3,6 @@
 # Tests directly invoke the private ``_resolve_model`` helper to
 # verify error paths around module/class resolution. Tracked in
 # panproto/didactic#1.
-# pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
@@ -172,21 +171,21 @@ def test_check_subcommand_without_action_prints_usage(
 
 
 def test_resolve_model_rejects_missing_colon() -> None:
-    from didactic.cli._cli import _resolve_model
+    from didactic.cli._cli import resolve_model
 
     with pytest.raises(ValueError, match="module.path:ClassName"):
-        _resolve_model("just_a_module")
+        resolve_model("just_a_module")
 
 
 def test_resolve_model_rejects_missing_class(tmp_path: Path) -> None:
-    from didactic.cli._cli import _resolve_model
+    from didactic.cli._cli import resolve_model
 
     module_path = tmp_path / "test_cli_resolve.py"
     module_path.write_text("x = 1\n")
     sys.path.insert(0, str(tmp_path))
     try:
         with pytest.raises(LookupError, match="Missing"):
-            _resolve_model("test_cli_resolve:Missing")
+            resolve_model("test_cli_resolve:Missing")
     finally:
         sys.path.remove(str(tmp_path))
 

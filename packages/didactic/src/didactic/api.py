@@ -75,7 +75,6 @@ __version__ = "0.3.2"
 #: (``@dx.lens(A, B)``) and as a module-style namespace. The attributes
 #: are bound by ``_LensNamespace.__init__`` in :mod:`didactic.lenses._lens`.
 
-
 __all__ = [
     "DEFAULT_CONFIG",
     "Axiom",

@@ -22,9 +22,6 @@ didactic.models._meta : the metaclass that records validators on the class.
 
 # Stamps ``__didactic_validator__`` onto a function; pyright won't
 # let arbitrary attribute assignment on a ``FunctionType``.
-# Tracked in panproto/didactic#1.
-# pyright: reportFunctionMemberAccess=false
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -150,8 +147,14 @@ def validates(
     def decorator(
         fn: Callable[..., FieldValue],
     ) -> Callable[..., FieldValue]:
-        # mark the function so the metaclass can find it
-        fn.__didactic_validator__ = {"fields": field_names, "mode": mode}
+        # Mark the function so the metaclass can find it. ``setattr``
+        # writes through the function-object's ``__dict__`` without
+        # tripping pyright's narrowed FunctionType view.
+        setattr(  # noqa: B010
+            fn,
+            "__didactic_validator__",
+            {"fields": field_names, "mode": mode},
+        )
         return fn
 
     return decorator
