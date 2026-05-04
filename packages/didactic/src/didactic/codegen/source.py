@@ -29,14 +29,9 @@ didactic.codegen.io : instance-level codecs.
 didactic.Model.emit_as : the unified entry point.
 """
 
-# ``schema: object`` (panproto handle carve-out) handed back to
-# panproto's ``emit(schema: Schema)``.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -112,7 +107,10 @@ def emit(schema: object, *, protocol: str) -> bytes:
     import panproto  # noqa: PLC0415
 
     registry = panproto.AstParserRegistry()
-    return registry.emit(protocol, schema)
+    # ``schema`` is typed ``object`` in the public signature (carve-out
+    # for the opaque panproto handle); the runtime contract is that it
+    # came from a previous ``parse`` call and is a real ``Schema``.
+    return registry.emit(protocol, cast("panproto.Schema", schema))
 
 
 def parse(source: bytes, *, protocol: str, file_path: str = "<source>") -> object:

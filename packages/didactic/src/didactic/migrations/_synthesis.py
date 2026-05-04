@@ -27,15 +27,10 @@ didactic.register_migration : the manual-authoring counterpart.
 panproto.auto_generate_lens : the runtime call.
 """
 
-# panproto's ``auto_generate_lens`` returns ``tuple[..., dict[str, object]]``
-# and we re-emit as ``tuple[JsonObject, ...]``; dict invariance bites.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false
-
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from didactic.models._model import Model
@@ -125,10 +120,12 @@ def synthesise_migration(
         )
 
     lens, score, proposals = result
+    # ``proposals`` comes back from panproto as ``list[dict[str, object]]``;
+    # narrow at the boundary to didactic's stricter ``JsonObject`` shape.
     return SynthesisResult(
         lens=lens,
         score=float(score),
-        proposals=tuple(proposals),
+        proposals=cast("tuple[JsonObject, ...]", tuple(proposals)),
     )
 
 

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-04
+
+### Added
+
+- New private module ``didactic._panproto_compat`` with typed wrappers
+  around the two ``panproto`` 0.43 functions whose shipped stubs
+  disagree with their runtime contracts (``create_theory`` and
+  ``colimit_theories``). The wrappers expose runtime-correct
+  signatures so the rest of didactic does not need per-call casts or
+  per-file ``# pyright`` suppressions to cross the boundary. Tracked
+  upstream as panproto/panproto#72; once panproto ships corrected
+  stubs, the compat module becomes a no-op and is removed.
+
+### Fixed
+
+- Pyright noise tracked in the panproto upstream-stub bucket of
+  ([#1]) is now resolved structurally. The five files that needed
+  per-file pyright suppressions to cross panproto's stub boundary
+  (``theory/_theory.py``, ``vcs/_repo.py``,
+  ``lenses/_dependent_lens.py``, ``migrations/_synthesis.py``,
+  ``codegen/source.py``) are now suppression-free. Each call site
+  uses the new compat module or a narrow ``cast(...)`` at the
+  panproto boundary; the dropped suppressions covered nothing else.
+- ``Repository.resolve_ref`` now raises ``panproto.VcsError`` when
+  the underlying call returns ``None`` instead of silently violating
+  its declared ``-> str`` return type.
+- Removed an unused ``_class_axiom_eq`` helper and its single ``Axiom``
+  import from ``theory/_theory.py``. The helper was a stub for a
+  future eqs-emission path; it lives in the git history and will
+  return when the panproto-Expr parser hookup lands.
+
+[#1]: https://github.com/panproto/didactic/issues/1
+
 ## [0.3.1] - 2026-05-01
 
 ### Fixed

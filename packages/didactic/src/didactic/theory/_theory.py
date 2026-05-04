@@ -1,10 +1,3 @@
-# panproto 0.43's ``_native.pyi`` stub for ``create_theory``/``colimit_theories``
-# disagrees with the runtime: ``create_theory`` declares ``dict[str, object]``
-# (rejecting our ``TheorySpec`` TypedDict, which IS a dict at runtime), and
-# ``colimit_theories`` is stubbed as ``(Sequence[Theory], /)`` while the
-# runtime is ``(t1, t2, shared)``. Tracked in panproto/didactic#1; will be
-# removed once panproto ships corrected stubs.
-# pyright: reportArgumentType=false, reportCallIssue=false, reportUnknownVariableType=false
 """Bridge between didactic FieldSpecs and ``panproto.Theory``.
 
 This module is the seam where the didactic-side metaclass output
@@ -35,8 +28,6 @@ didactic.fields._fields.FieldSpec : the per-field record consumed here.
 
 # ``_class_axiom_eq`` is a stub for the eqs-emission path that's
 # registered later; the local symbol is referenced by its qualname.
-# Tracked in panproto/didactic#1.
-# pyright: reportUnusedFunction=false
 
 from __future__ import annotations
 
@@ -45,7 +36,6 @@ from typing import TYPE_CHECKING, TypedDict, cast
 if TYPE_CHECKING:
     import panproto
 
-    from didactic.axioms._axioms import Axiom
     from didactic.fields._fields import FieldSpec
     from didactic.models._model import Model
     from didactic.types._typing import JsonValue
@@ -257,36 +247,6 @@ def _edge_accessor(
     }
 
 
-def _class_axiom_eq(ax: Axiom, schema_kind: str, idx: int) -> dict[str, JsonValue]:
-    """Build an Equation dict for a class-level axiom.
-
-    Parameters
-    ----------
-    ax
-        An [Axiom][didactic.axioms._axioms.Axiom] instance.
-    schema_kind
-        The model's primary sort name; used as a default name prefix.
-    idx
-        Zero-based position within the class's ``__axioms__`` list.
-
-    Returns
-    -------
-    dict
-        An equation dict with name + the raw expression text. The
-        panproto-side parser will translate the expression once the
-        runtime hookup lands; for now we carry the surface form
-        verbatim under an ``expr`` key.
-    """
-    name = ax.name or f"{schema_kind}_axiom_{idx}"
-    body: dict[str, JsonValue] = {
-        "name": name,
-        "expr": ax.expr,
-    }
-    if ax.message:
-        body["message"] = ax.message
-    return body
-
-
 def _embed_accessor(
     field_name: str, parent_sort: str, target_sort: str
 ) -> dict[str, JsonValue]:
@@ -381,13 +341,13 @@ def build_theory(cls: type) -> panproto.Theory:
     ``panproto``. Doing it lazily lets the rest of the package be
     authored and unit-tested without panproto installed.
     """
-    import panproto  # noqa: PLC0415
+    from didactic._panproto_compat import create_theory  # noqa: PLC0415
 
     parents = _model_parents(cls)
     if len(parents) <= 1:
         # single (or no) Model inheritance: the flat spec is correct
         spec = build_theory_spec(cls)
-        return panproto.create_theory(spec)
+        return create_theory(spec)
 
     # multiple Model inheritance: compute the colimit of the parent
     # theories over their lowest common ancestor in the Model lineage
@@ -470,10 +430,10 @@ def _build_colimit_theory(cls: type, parents: list[type]) -> panproto.Theory:
     The result for ``class D(A, B, C)`` is
     ``colimit(colimit(A, B, lca(A, B)), C, lca(...))``.
     """
-    import panproto  # noqa: PLC0415
-
-    create_theory = panproto.create_theory
-    colimit_theories = panproto.colimit_theories
+    from didactic._panproto_compat import (  # noqa: PLC0415
+        colimit_theories,
+        create_theory,
+    )
 
     accumulator = create_theory(build_theory_spec(parents[0]))
     accumulator_cls: type = parents[0]
