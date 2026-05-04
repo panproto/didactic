@@ -2,7 +2,6 @@
 # narrower payload type; the runtime accepts the base shape too. The
 # ``Literal[...]`` discriminator extraction goes through annotation
 # walking that pyright can't follow. Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false, reportIncompatibleMethodOverride=false, reportUnnecessaryIsInstance=false
 """Tagged (discriminated) unions over [Model][didactic.api.Model] subclasses.
 
 Pydantic-shaped discriminated unions: declare a base class with a
@@ -49,13 +48,15 @@ didactic.models._meta.ModelMeta : the metaclass; unchanged.
 from __future__ import annotations
 
 import annotationlib
-from typing import TYPE_CHECKING, ClassVar, Literal, Self, get_args, get_origin
+from typing import TYPE_CHECKING, ClassVar, Literal, Self, cast, get_args, get_origin
 
 from didactic.fields._validators import ValidationError, ValidationErrorEntry
 from didactic.models._model import Model
 
 if TYPE_CHECKING:
-    from didactic.types._typing import FieldValue, JsonObject, Opaque
+    from collections.abc import Mapping
+
+    from didactic.types._typing import FieldValue, JsonValue, Opaque
 
 
 class TaggedUnion(Model):
@@ -173,7 +174,7 @@ class TaggedUnion(Model):
             root.__variants__[value] = cls
 
     @classmethod
-    def model_validate(cls, payload: JsonObject) -> Self:
+    def model_validate(cls, payload: Mapping[str, FieldValue | JsonValue]) -> Self:
         """Dispatch on the discriminator and validate as the matched variant.
 
         Parameters
@@ -212,7 +213,10 @@ class TaggedUnion(Model):
             )
             raise ValidationError(entries=(entry,), model=cls)
 
-        value = payload[disc]
+        # ``payload`` is widened to ``Mapping[str, FieldValue | JsonValue]``
+        # to match the base ``model_validate`` signature; the discriminator
+        # value is recorded in ``__variants__`` under a ``FieldValue`` key.
+        value = cast("FieldValue", payload[disc])
         variant = cls.__variants__.get(value)
         if variant is None:
             entry = ValidationErrorEntry(
@@ -225,22 +229,24 @@ class TaggedUnion(Model):
             )
             raise ValidationError(entries=(entry,), model=cls)
 
-        return variant.model_validate(payload)  # type: ignore[return-value]
+        # ``variant`` is a concrete subclass of ``cls``; the return type
+        # is bound to ``Self`` of the union root by design (the dispatch
+        # contract is "give me a value of *some* variant").
+        return cast("Self", variant.model_validate(payload))
 
 
 def _find_union_root(cls: type[TaggedUnion]) -> type[TaggedUnion] | None:
     """Walk MRO to find the nearest ancestor with a non-None ``__discriminator__``."""
     for klass in cls.__mro__[1:]:
         if (
-            isinstance(klass, type)
-            and issubclass(klass, TaggedUnion)
+            issubclass(klass, TaggedUnion)
             and klass.__dict__.get("__discriminator__") is not None
         ):
             return klass
     return None
 
 
-def _literal_values(annotation: type) -> tuple[FieldValue, ...]:
+def _literal_values(annotation: Opaque) -> tuple[FieldValue, ...]:
     """Extract the values from a ``Literal[...]`` annotation.
 
     Returns an empty tuple when the annotation isn't a Literal.

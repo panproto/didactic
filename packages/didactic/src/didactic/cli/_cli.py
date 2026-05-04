@@ -2,7 +2,6 @@
 # ``.breaking`` shape is a ``JsonValue`` union; pyright can't narrow
 # the iteration target without per-branch ``isinstance``. Tracked in
 # panproto/didactic#1.
-# pyright: reportGeneralTypeIssues=false, reportOptionalIterable=false, reportUnknownVariableType=false
 """``didactic`` CLI front-end.
 
 Subcommands
@@ -117,6 +116,11 @@ def _resolve_model(spec: str) -> type[Model]:
     return cls
 
 
+# Public re-export so tests can introspect the resolver without tripping
+# pyright's reportPrivateUsage.
+resolve_model = _resolve_model
+
+
 def _cmd_schema_show(args: argparse.Namespace) -> int:
     cls = _resolve_model(args.model)
     from didactic.migrations._fingerprint import structural_fingerprint  # noqa: PLC0415
@@ -190,8 +194,10 @@ def _cmd_check_breaking(args: argparse.Namespace) -> int:
         print(f"compatible: {args.old} -> {args.new}")
         return 0
     print(f"BREAKING: {args.old} -> {args.new}")
-    for change in report.get("breaking", []):
-        print(f"  {change}")
+    breaking = report.get("breaking")
+    if isinstance(breaking, list):
+        for change in breaking:
+            print(f"  {change}")
     return 2
 
 
@@ -234,7 +240,6 @@ _SUBCOMMANDS = {
     "check": _dispatch_check,
     "version": _cmd_version,
 }
-
 
 __all__ = [
     "main",

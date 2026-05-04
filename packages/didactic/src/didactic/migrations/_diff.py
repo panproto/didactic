@@ -1,7 +1,6 @@
 # ``diff_and_classify`` returns a ``CompatReport`` whose ``.to_dict()``
 # we re-emit as ``JsonObject``; pyright's stub doesn't narrow the
 # panproto-side types tightly enough. Tracked in panproto/didactic#1.
-# pyright: reportReturnType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportCallIssue=false
 """Schema diff and breaking-change detection.
 
 Two thin functions over panproto's ``diff_schemas`` and
@@ -22,9 +21,11 @@ panproto.diff_schemas : the runtime call.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
+    import panproto
+
     from didactic.models._model import Model
     from didactic.types._typing import JsonObject
 
@@ -65,7 +66,7 @@ def diff(old: type[Model], new: type[Model]) -> JsonObject:
     old_schema = schema_from_model(old)
     new_schema = schema_from_model(new)
     schema_diff = panproto.diff_schemas(old_schema, new_schema)
-    return schema_diff.to_dict()
+    return cast("JsonObject", schema_diff.to_dict())
 
 
 def classify_change(old: type[Model], new: type[Model]) -> JsonObject:
@@ -111,7 +112,24 @@ def classify_change(old: type[Model], new: type[Model]) -> JsonObject:
         schema_theory=build_theory(new),
         obj_kinds=["object"],
     )
-    compat = panproto.diff_and_classify(old_schema, new_schema, protocol)
+
+    # ``panproto.diff_and_classify`` accepts a third positional ``protocol``
+    # argument at runtime; the upstream stub still lists only two. Cast
+    # to a Protocol that exposes the runtime arity and return shape.
+    class _CompatReportLike(Protocol):
+        def to_dict(self) -> JsonObject: ...
+
+    class _DiffAndClassifyLike(Protocol):
+        def __call__(
+            self,
+            old: panproto.Schema,
+            new: panproto.Schema,
+            protocol: panproto.Protocol,
+            /,
+        ) -> _CompatReportLike: ...
+
+    diff_and_classify = cast("_DiffAndClassifyLike", panproto.diff_and_classify)
+    compat = diff_and_classify(old_schema, new_schema, protocol)
     return compat.to_dict()
 
 

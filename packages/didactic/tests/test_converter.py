@@ -9,12 +9,9 @@ tagged ``type_error``.
 
 # ``converter=int`` passes the ``int`` type as a converter; the
 # runtime calls it; pyright sees ``type[int]`` not the call.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -42,7 +39,10 @@ class WithConverter(dx.Model):
     """Model that exercises the converter slot on three field types."""
 
     name: str = dx.field(converter=_strip_lower)
-    count: int = dx.field(default=0, converter=int)
+    # ``int`` itself does not type-check as
+    # ``Callable[[FieldValue], FieldValue]``; the lambda routes through
+    # the wide ``FieldValue`` union and re-narrows on call.
+    count: int = dx.field(default=0, converter=lambda v: int(cast("str", v)))
     tags: tuple[str, ...] = dx.field(default=(), converter=_strip_each)
 
 

@@ -5,7 +5,6 @@
 # pyright sees as ``() -> int`` rather than ``int`` due to the
 # ``__class_axioms__`` decorator wrapper. Tracked in
 # panproto/didactic#1.
-# pyright: reportUnhashable=false, reportOperatorIssue=false
 """Tests for Theory construction with class inheritance.
 
 Single inheritance flattens transparently (the metaclass walks the
@@ -15,10 +14,29 @@ real ``panproto.colimit_theories`` call.
 
 from __future__ import annotations
 
+from typing import Protocol, cast
+
 import panproto
 
 import didactic.api as dx
 from didactic.theory._theory import build_theory, build_theory_spec
+
+
+class _TheoryShape(Protocol):
+    """Property-shaped view of ``panproto.Theory`` count attributes.
+
+    The upstream stub still types ``op_count`` / ``sort_count`` /
+    ``eq_count`` as zero-arg methods; at runtime they are properties.
+    Casting through this protocol lets the tests express the property
+    semantics without bypassing the type checker.
+    """
+
+    @property
+    def op_count(self) -> int: ...
+    @property
+    def sort_count(self) -> int: ...
+    @property
+    def eq_count(self) -> int: ...
 
 
 # -- single inheritance ------------------------------------------------
@@ -32,7 +50,7 @@ def test_single_inheritance_flattens_fields() -> None:
         y: int
 
     spec = build_theory_spec(B)
-    op_names = {op["name"] for op in spec["ops"]}
+    op_names = {cast("str", op["name"]) for op in spec["ops"]}
     assert op_names == {"x", "y"}
 
 
@@ -96,7 +114,10 @@ def test_diamond_inheritance_uses_colimit() -> None:
     # colimit pushes out B and C over A; resulting Theory has all
     # accessor ops from the four classes but the ``shared`` accessor
     # only appears once
-    assert theory.op_count >= 4
+    # ``op_count`` is a property at runtime; the panproto stub still
+    # types it as a zero-arg method. ``_TheoryShape`` projects the
+    # property view we rely on.
+    assert cast("_TheoryShape", theory).op_count >= 4
 
 
 def test_two_unrelated_parents_uses_colimit() -> None:
@@ -114,4 +135,4 @@ def test_two_unrelated_parents_uses_colimit() -> None:
     theory = build_theory(C)
     assert isinstance(theory, panproto.Theory)
     # ops from A, B, and the cls-only c
-    assert theory.op_count >= 3
+    assert cast("_TheoryShape", theory).op_count >= 3

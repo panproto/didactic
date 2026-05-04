@@ -31,9 +31,6 @@ didactic.migrations._fingerprint.structural_fingerprint : the underlying address
 
 # Cross-translation between ``FieldValue`` and ``JsonValue`` shapes
 # in the schema-URI registry layer.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false, reportReturnType=false
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
@@ -195,6 +192,9 @@ def validate_with_uri_lookup(
         raise KeyError(msg)
 
     uri = payload["$schema"]
+    if not isinstance(uri, str):
+        msg = "validate_with_uri_lookup: $schema value must be a string"
+        raise TypeError(msg)
     cls = registry.lookup(uri)
     if cls is None:
         msg = f"validate_with_uri_lookup: no registered model for URI {uri!r}"

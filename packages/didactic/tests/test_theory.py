@@ -2,7 +2,6 @@
 # pyright flags ``set`` literals containing classes as unhashable
 # (Model is hashable by class identity at runtime). Tracked in
 # panproto/didactic#1.
-# pyright: reportUnhashable=false
 """Tests for the panproto-Theory bridge.
 
 The bridge has two layers:
@@ -13,6 +12,8 @@ The bridge has two layers:
 
 We exercise both. The integration test loads ``panproto`` directly.
 """
+
+from typing import cast
 
 import panproto
 
@@ -58,7 +59,7 @@ def test_spec_primary_sort_present() -> None:
 
 def test_spec_per_field_constraint_sorts() -> None:
     spec = build_theory_spec(Simple)
-    sort_names = {s["name"] for s in spec["sorts"]}
+    sort_names = {cast("str", s["name"]) for s in spec["sorts"]}
     assert "Simple_id" in sort_names
     assert "Simple_age" in sort_names
     assert "Simple_nickname" in sort_names
@@ -66,7 +67,7 @@ def test_spec_per_field_constraint_sorts() -> None:
 
 def test_spec_field_accessor_ops() -> None:
     spec = build_theory_spec(Simple)
-    op_names = {op["name"] for op in spec["ops"]}
+    op_names = {cast("str", op["name"]) for op in spec["ops"]}
     assert op_names == {"id", "age", "nickname"}
 
 

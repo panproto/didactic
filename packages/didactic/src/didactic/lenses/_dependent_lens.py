@@ -42,14 +42,9 @@ didactic.Lens : the schema-fixed lens type.
 didactic.Iso : the isomorphism subcase.
 """
 
-# ``ProtolensChain.instantiate(src, tgt)`` accepts the project's
-# ``Schema`` Protocol; pyright sees the panproto stub class instead.
-# Tracked in panproto/didactic#1.
-# pyright: reportArgumentType=false
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import panproto
@@ -280,7 +275,12 @@ class DependentLens:
         panproto.LensError
             If the chain cannot be instantiated against ``schema``.
         """
-        return self._inner.instantiate(schema, protocol)
+        # ``ProtolensChain.instantiate``'s shipped stub claims
+        # ``(src: Schema, tgt: Schema)``; the runtime is
+        # ``(schema, protocol)`` with the second arg being a
+        # ``panproto.Protocol``. Cast at the boundary so we type-match
+        # the stub while passing the runtime's expected value.
+        return self._inner.instantiate(schema, cast("panproto.Schema", protocol))
 
     # serialisation -------------------------------------------------
 

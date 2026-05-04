@@ -5,7 +5,6 @@
 # can't follow the dynamic ``create_model`` round-trip, so attribute
 # access on the returned instance comes back as Unknown. Tracked in
 # panproto/didactic#1.
-# pyright: reportUnknownMemberType=false, reportAttributeAccessIssue=false, reportArgumentType=false
 
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from pydantic import BaseModel
 
 import didactic.api as dx
 from didactic.pydantic import from_pydantic, to_pydantic
-
 
 # -- basic translation -------------------------------------------------
 
@@ -100,7 +98,9 @@ def test_examples_carry_through() -> None:
         id: str = dx.field(examples=("u1", "u2"))
 
     PydUser = to_pydantic(User)
-    assert list(PydUser.model_fields["id"].examples) == ["u1", "u2"]
+    examples = PydUser.model_fields["id"].examples
+    assert examples is not None
+    assert list(examples) == ["u1", "u2"]
 
 
 def test_alias_carries_through() -> None:
@@ -130,8 +130,9 @@ def test_instantiate_pydantic_model() -> None:
 
     PydUser = to_pydantic(User)
     u = PydUser(id="u1", email="a@b.c")
-    assert u.id == "u1"
-    assert u.email == "a@b.c"
+    dumped = u.model_dump()
+    assert dumped["id"] == "u1"
+    assert dumped["email"] == "a@b.c"
 
 
 def test_pydantic_model_validates_inputs() -> None:
@@ -141,7 +142,7 @@ def test_pydantic_model_validates_inputs() -> None:
 
     PydUser = to_pydantic(User)
     u = PydUser(id="u1", age="42")  # pydantic coerces str->int
-    assert u.age == 42
+    assert u.model_dump()["age"] == 42
 
 
 # -- round-trip --------------------------------------------------------

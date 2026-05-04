@@ -28,9 +28,6 @@ didactic.models._meta : the metaclass that orchestrates field translation.
 
 # An ``items()`` over an ``Annotated``-stripped value whose type
 # narrows to the wider ``object`` carve-out branch.
-# Tracked in panproto/didactic#1.
-# pyright: reportUnknownArgumentType=false
-
 from __future__ import annotations
 
 import json
@@ -38,7 +35,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
 from functools import reduce
-from types import EllipsisType, NoneType, UnionType
+from types import EllipsisType, GenericAlias, NoneType, UnionType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -64,13 +61,13 @@ type SpecRecord = dict[str, "JsonValue"]
 
 # The widest annotation form ``classify`` accepts. Includes the nominal
 # ``type`` (covering bare classes and pyright's special-cased parameterised
-# generics like ``tuple[int, ...]`` and ``dict[str, int]``) plus PEP 604
+# generics like ``tuple[int, ...]`` and ``dict[str, int]``), PEP 604
 # ``UnionType`` (``int | None``), which pyright does *not* narrow to
-# ``type``. Other typing special forms (``typing.Union[...]``,
-# ``Annotated[...]``, PEP 695 type aliases) are accepted at runtime but
-# fall outside this static union; callers that pass them rely on pyright's
-# legacy structural acceptance of those forms.
-TypeForm = type | UnionType
+# ``type``, and PEP 695 ``TypeAliasType`` instances. ``typing.Annotated``
+# values and ``typing.Union[...]`` are also accepted at runtime; callers
+# that pass them rely on pyright's legacy structural acceptance of those
+# forms or use ``cast`` at the boundary.
+TypeForm = type | UnionType | TypeAliasType | GenericAlias
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -983,8 +980,9 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
             }
             return {f"{alias_name}_dict": inner_obj}
         msg = (
-            f"value of type {type(value).__name__} does not match any arm of "
-            f"alias {alias_name!r}; expected one of {sorted(table)}."
+            f"value of type {type(cast('Opaque', value)).__name__} does not "
+            f"match any arm of alias {alias_name!r}; expected one of "
+            f"{sorted(table)}."
         )
         raise TypeError(msg)
 
@@ -1287,6 +1285,13 @@ def _expand_type_alias(typ: TypeForm) -> TypeForm:
         new_meta = tuple(substitution.get(m, m) for m in value_args[1:])
         return cast("TypeForm", Annotated[new_base, *new_meta])
     return cast("TypeForm", substitution.get(value, value))
+
+
+# Public re-export under a non-underscored name, intended for tests and
+# tooling that need to introspect a PEP 695 alias substitution. The
+# underscored ``_expand_type_alias`` name is retained for backwards
+# compatibility within this module.
+expand_type_alias = _expand_type_alias
 
 
 def unwrap_annotated(typ: TypeForm) -> tuple[TypeForm, tuple[Opaque, ...]]:
@@ -1782,7 +1787,7 @@ def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTran
                 f"got {type(items).__name__}"
             )
             raise TypeError(msg)
-        return target_cls.from_storage_dict(items)
+        return target_cls.from_storage_dict(cast("dict[str, str]", items))
 
     def from_json(v: JsonValue) -> FieldValue:
         # the JSON form is the model_dump dict (decoded values), not

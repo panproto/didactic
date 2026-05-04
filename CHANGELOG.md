@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-04
+
+### Changed
+
+- panproto pin bumped to ``>=0.43.1``. panproto 0.43.1 ships
+  corrected ``_native.pyi`` stubs for ``create_theory``
+  (``Mapping[str, object]``) and ``colimit_theories``
+  (``(t1, t2, shared)``), so didactic now calls these directly
+  again. Tracking issue panproto/panproto#72 closed upstream.
+
+### Fixed
+
+- All strategic per-file pyright suppressions tracked under ([#1])
+  are now removed and the underlying issues are fixed structurally.
+  ``uv run pyright`` reports 0 errors with no per-file
+  ``# pyright: report*=false`` directives outside the documented
+  ``CONTRIBUTING.md`` carve-out (the ``field()`` overload pattern,
+  which pyright in strict mode cannot reconcile with the
+  ergonomics that drive the carve-out's existence).
+- The fixes touch every package: typed ``cast`` boundaries where
+  panproto returns wider types than didactic's narrower public
+  surface, ``isinstance`` narrowing on ``model_dump`` results in
+  tests, ``Model.model_validate({...})`` swaps for negative tests
+  passing wrong-typed kwargs, public re-exports of
+  underscore-prefixed names that tests already reach for, and a
+  handful of small refactors (a typed kwargs dict in
+  ``_resolve_config``, a structured cast at the metaclass
+  annotation boundary, ``__provenance__`` gated behind
+  ``TYPE_CHECKING`` so the metaclass does not register it as a
+  Model field).
+- ``TypeForm`` widened to include ``TypeAliasType`` and
+  ``GenericAlias``. The static type now matches what
+  ``classify`` / ``unwrap_annotated`` accept at runtime.
+- ``FieldSpec.annotation`` widened to ``TypeForm | TypeVar |
+  ForwardRef``. The metaclass walks generic-parameter and
+  forward-string annotations as a real path; the type now reflects
+  it.
+- ``Repository.resolve_ref`` raises ``panproto.VcsError`` when
+  the underlying call returns ``None`` instead of silently
+  violating its ``-> str`` return type.
+- Removed an unused ``_class_axiom_eq`` helper from
+  ``theory/_theory.py``. The helper was a stub for a future
+  eqs-emission path; it lives in the git history and will return
+  when the panproto-Expr parser hookup lands.
+- ``Lens[A, B]`` is now ``Lens[A, B, C]`` in
+  ``check_lens_laws`` so the complement type carries through to
+  ``dx.testing.check_lens_laws``; tests parameterise as
+  ``dx.Lens[User, User, str]``.
+- Settings package: replaced ``# type: ignore`` directives by
+  routing yaml through ``importlib.import_module``, adding a real
+  ``fetch`` method to the ``_Source`` base, casting at the
+  ``Opaque -> JsonValue`` loader boundary, splitting the
+  ``argparse.Namespace`` vs ``Mapping`` branches, and gating
+  ``__provenance__`` behind ``TYPE_CHECKING`` so the metaclass
+  does not register it as a Model field.
+
+[#1]: https://github.com/panproto/didactic/issues/1
+
 ## [0.3.1] - 2026-05-01
 
 ### Fixed

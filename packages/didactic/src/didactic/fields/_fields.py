@@ -29,11 +29,14 @@ didactic.types._types : the translation primitives FieldSpec uses.
 didactic.models._meta : the metaclass that consumes FieldSpec.
 """
 
-# ``extras`` is the project's ``Mapping[str, Opaque]`` and pyright
-# doesn't carry the value-type through ``dict(extras)``.
-# Tracked in panproto/didactic#1.
-# pyright: reportUnknownVariableType=false
-
+# ``field()`` uses the field-specifier overload pattern from
+# ``CONTRIBUTING.md`` carve-out 1: typed overloads return ``T`` so
+# call sites like ``email: str = dx.field(description="...")`` type-check,
+# while the implementation returns ``Field``. Pyright in strict mode
+# rejects this inconsistency between the unconstrained-``T`` overload
+# returns and the concrete ``Field`` impl return; no structural fix
+# preserves the surface ergonomics. Confined to this file.
+# pyright: reportInconsistentOverload=false
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,8 +46,11 @@ from typing import (
     Annotated,
     Any,
     Final,
+    ForwardRef,
     Literal,
     Self,
+    TypeVar,
+    cast,
     get_args,
     get_origin,
     overload,
@@ -53,7 +59,7 @@ from typing import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from didactic.types._types import TypeTranslation
+    from didactic.types._types import TypeForm, TypeTranslation
     from didactic.types._typing import (
         DefaultOrMissing,
         FieldValue,
@@ -109,7 +115,6 @@ MISSING: Final[_Missing] = _Missing()
 #: Public alias for the sentinel type, exposed so other modules can write
 #: ``isinstance(value, MissingType)`` without crossing a private boundary.
 MissingType = _Missing
-
 
 # ---------------------------------------------------------------------------
 # The Field descriptor class
@@ -235,9 +240,9 @@ def field(
     usage_mode: Literal["readwrite", "computed", "materialised"] = ...,
     extras: Mapping[str, Opaque] | None = ...,
 ) -> Any: ...  # documented escape hatch for required-with-metadata fields
-def field(  # pyright: ignore[reportInconsistentOverload]
+def field(
     *,
-    default: DefaultOrMissing = MISSING,
+    default: FieldValue | _Missing = MISSING,
     default_factory: Callable[[], FieldValue] | None = None,
     converter: Callable[[FieldValue], FieldValue] | None = None,
     alias: str | None = None,
@@ -370,7 +375,7 @@ class FieldSpec:
     """
 
     name: str
-    annotation: type
+    annotation: TypeForm | TypeVar | ForwardRef
     translation: TypeTranslation
     default: DefaultOrMissing = MISSING
     default_factory: Callable[[], FieldValue] | None = None
@@ -382,7 +387,9 @@ class FieldSpec:
     nominal: bool = False
     usage_mode: Literal["readwrite", "computed", "materialised"] = "readwrite"
     axioms: tuple[str, ...] = ()
-    extras: Mapping[str, Opaque] = _dc_field(default_factory=dict)
+    extras: Mapping[str, Opaque] = _dc_field(
+        default_factory=lambda: cast("dict[str, Opaque]", {})
+    )
 
     @property
     def is_required(self) -> bool:

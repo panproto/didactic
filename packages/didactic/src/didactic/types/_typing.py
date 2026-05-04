@@ -19,9 +19,6 @@ didactic.types._types : the translation layer that consumes these aliases.
 
 # References ``_Missing`` (the sentinel singleton class) by name in
 # the ``DefaultOrMissing`` alias; the ``_`` is conventional.
-# Tracked in panproto/didactic#1.
-# pyright: reportPrivateUsage=false
-
 from __future__ import annotations
 
 from datetime import date, datetime, time
@@ -30,9 +27,8 @@ from typing import TYPE_CHECKING, ForwardRef, Protocol, runtime_checkable
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from didactic.fields._fields import _Missing
+    from didactic.fields._fields import MissingType
     from didactic.models._model import Model
-
 
 # ---------------------------------------------------------------------------
 # Structural "anything" Protocol
@@ -70,7 +66,6 @@ type JsonValue = (
 #: Convenience alias for an object-shaped JsonValue (``dict[str, JsonValue]``).
 type JsonObject = dict[str, JsonValue]
 
-
 # ---------------------------------------------------------------------------
 # Field-space values
 # ---------------------------------------------------------------------------
@@ -95,7 +90,6 @@ type FieldValue = (
     | Model
 )
 
-
 # ---------------------------------------------------------------------------
 # Encoded / storage values
 # ---------------------------------------------------------------------------
@@ -104,7 +98,6 @@ type FieldValue = (
 #: only inhabitant; the alias exists so callers can read intent at sites
 #: where "this is the encoded representation, not arbitrary text" matters.
 type Encoded = str
-
 
 # ---------------------------------------------------------------------------
 # Class / forward-reference targets
@@ -115,15 +108,13 @@ type Encoded = str
 #: ``typing.ForwardRef`` proxy.
 type ClassTarget = type | str | ForwardRef
 
-
 # ---------------------------------------------------------------------------
 # Field default sentinel
 # ---------------------------------------------------------------------------
 
 #: A field default may be either a real value or the
 #: [MISSING][didactic.fields._fields.MISSING] sentinel.
-type DefaultOrMissing = FieldValue | _Missing
-
+type DefaultOrMissing = FieldValue | MissingType
 
 __all__ = [
     "ClassTarget",

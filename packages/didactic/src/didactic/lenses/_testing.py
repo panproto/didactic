@@ -102,8 +102,8 @@ def verify_iso[A](
     _check()
 
 
-def check_lens_laws[A, B](
-    lens: Lens[A, B],
+def check_lens_laws[A, B, C](
+    lens: Lens[A, B, C],
     strategy: SearchStrategy[A],
     *,
     max_examples: int = 100,

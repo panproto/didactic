@@ -2,9 +2,6 @@
 
 # Pydantic ``BaseModel`` instance returned by ``as_request`` exposes
 # fields dynamically; pyright can't see them.
-# Tracked in panproto/didactic#1.
-# pyright: reportAttributeAccessIssue=false, reportUnknownMemberType=false
-
 from __future__ import annotations
 
 import didactic.api as dx
@@ -22,7 +19,7 @@ def test_as_request_returns_pydantic_class() -> None:
     Pyd = as_request(User)
     assert issubclass(Pyd, BaseModel)
     instance = Pyd(id="u1", email="ada@example.org")
-    assert instance.id == "u1"
+    assert instance.model_dump()["id"] == "u1"
 
 
 def test_as_request_caches_by_class() -> None:

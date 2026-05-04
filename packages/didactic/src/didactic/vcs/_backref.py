@@ -2,7 +2,6 @@
 # type; pyright wants generics to bind multiple sites. The runtime
 # uses ``A`` for the call-site type binding documentation. Tracked
 # in panproto/didactic#1.
-# pyright: reportInvalidTypeVarUse=false
 """In-memory Backref resolution.
 
 [Backref][didactic.api.Backref] is the inverse of [Ref][didactic.api.Ref]: if
@@ -37,7 +36,7 @@ didactic.Repository : the eventual Repository-backed resolution path.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -45,8 +44,8 @@ if TYPE_CHECKING:
     from didactic.models._model import Model
 
 
-def resolve_backrefs[A: Model, B: Model](
-    target: A,
+def resolve_backrefs[B: Model](
+    target: Model,
     candidates: Iterable[B],
     *,
     via: str,
@@ -178,11 +177,13 @@ class ModelPool:
             instances are stored under their own concrete class, not
             under ``cls``). Order is registration order.
         """
-        return list(self._by_class.get(cls, []))  # type: ignore[arg-type]
+        # ``_by_class`` is keyed on ``type[Model]``; ``cls`` narrows
+        # the value type to ``list[M]`` only at the call site.
+        return cast("list[M]", list(self._by_class.get(cls, [])))
 
-    def backrefs[A: Model, B: Model](
+    def backrefs[B: Model](
         self,
-        target: A,
+        target: Model,
         candidate_cls: type[B],
         *,
         via: str,

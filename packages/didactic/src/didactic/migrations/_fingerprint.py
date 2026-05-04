@@ -2,7 +2,6 @@
 # back into ``JsonObject`` (``dict[str, JsonValue]``); the dict
 # invariance bites. ``_default`` narrowing on tuple inputs is
 # pyright-flagged as redundant. Tracked in panproto/didactic#1.
-# pyright: reportReturnType=false, reportArgumentType=false, reportUnnecessaryIsInstance=false
 """Stable fingerprints for didactic Theory specs.
 
 didactic stores migration registry entries by a fingerprint that is
@@ -45,12 +44,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from didactic.theory._theory import TheorySpec
-    from didactic.types._typing import JsonObject, JsonValue
-
+    from didactic.types._typing import JsonObject, JsonValue, Opaque
 
 # canonical placeholder for the model's own display name; chosen to be
 # unambiguous and unlikely to clash with any user-supplied identifier
@@ -89,7 +87,7 @@ def canonical_json_bytes(spec: JsonValue) -> bytes:
     ).encode("utf-8")
 
 
-def _default(obj: tuple[JsonValue, ...]) -> JsonValue:
+def _default(obj: Opaque) -> JsonValue:
     """Fallback encoder for tuples (json default would already accept them).
 
     The callback runs on every non-JSON-native value ``json.dumps``
@@ -99,7 +97,7 @@ def _default(obj: tuple[JsonValue, ...]) -> JsonValue:
     raises so the spec author sees it immediately.
     """
     if isinstance(obj, tuple):
-        return list(obj)
+        return list(cast("tuple[JsonValue, ...]", obj))
     msg = f"non-JSON-encodable value in didactic spec: {type(obj).__name__}"
     raise TypeError(msg)
 
@@ -163,7 +161,11 @@ def structural_spec(spec: JsonObject) -> JsonObject:
     if not isinstance(name, str):
         msg = "structural_spec(): spec['name'] must be a string"
         raise TypeError(msg)
-    return _replace_model_name(spec, name)
+    rewritten = _replace_model_name(spec, name)
+    if not isinstance(rewritten, dict):
+        msg = "structural_spec(): top-level rewrite must remain a dict"
+        raise TypeError(msg)
+    return rewritten
 
 
 def _replace_model_name(value: JsonValue, name: str) -> JsonValue:
@@ -209,7 +211,7 @@ def structural_fingerprint(spec: TheorySpec) -> str:
     structurally-identical Models should share one entry regardless of
     their class names.
     """
-    return fingerprint(structural_spec(spec))
+    return fingerprint(structural_spec(cast("JsonObject", spec)))
 
 
 __all__ = [

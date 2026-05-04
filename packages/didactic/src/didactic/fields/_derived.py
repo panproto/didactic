@@ -47,7 +47,6 @@ didactic.computed : evaluated every read; not cached.
 # ``_`` prefix is conventional for "implementation detail of the
 # Model layer"; the derived-decorator integration is part of that
 # layer. Tracked in panproto/didactic#1.
-# pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
@@ -90,18 +89,25 @@ def derived(fn: Callable[..., FieldValue]) -> property:
     >>> Box(w=3, h=4).area
     12
     """
-    fn.__didactic_derived__ = True  # type: ignore[attr-defined]
+    # ``__didactic_derived__`` is a marker attribute consumed by
+    # ``derived_field_names`` to discover wrapped derived methods. The
+    # function-object protocol allows arbitrary attribute writes at
+    # runtime; pyright models ``Callable`` as opaque so we set through
+    # ``setattr`` to keep the boundary explicit.
+    setattr(fn, "__didactic_derived__", True)  # noqa: B010
     name = fn.__name__
 
     def _getter(self: Model) -> FieldValue:
-        cache = self._derived_cache
+        cache = cast("dict[str, FieldValue]", getattr(self, "_derived_cache"))  # noqa: B009
         if name not in cache:
             cache[name] = fn(self)
-        return cast("FieldValue", cache[name])
+        return cache[name]
 
     prop = property(_getter)
-    prop.fget.__didactic_derived__ = True  # type: ignore[union-attr]
-    prop.fget.__wrapped_name__ = name  # type: ignore[union-attr]
+    fget = prop.fget
+    if fget is not None:
+        setattr(fget, "__didactic_derived__", True)  # noqa: B010
+        setattr(fget, "__wrapped_name__", name)  # noqa: B010
     return prop
 
 

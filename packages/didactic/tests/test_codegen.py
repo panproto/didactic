@@ -10,7 +10,6 @@ import pytest
 import didactic.api as dx
 from didactic.codegen import IndentWriter, emitter, list_emitters
 
-
 # -- json schema ------------------------------------------------------
 
 

@@ -2,15 +2,18 @@
 
 # Dynamically constructs a Model class via ``Model.__class__``
 # metaclass invocation; pyright can't follow the call shape.
-# Tracked in panproto/didactic#1.
-# pyright: reportCallIssue=false
-
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 import didactic.api as dx
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from didactic.types._typing import Opaque
 
 # -- simple axioms ----------------------------------------------------
 
@@ -89,7 +92,15 @@ def test_comparison_operators(
     value: int,
     should_pass: bool,
 ) -> None:
-    cls = dx.Model.__class__(  # type: ignore[call-overload]
+    # ``dx.Model.__class__`` is the metaclass; calling it directly with
+    # the three-arg ``type``-style signature constructs a Model subclass
+    # without entering the standard ``class`` syntax. The cast widens
+    # the metaclass call to its three-arg type-builder form.
+    meta = cast(
+        "Callable[[str, tuple[type, ...], dict[str, Opaque]], type[dx.Model]]",
+        dx.Model.__class__,
+    )
+    cls = meta(
         "Cls",
         (dx.Model,),
         {"__annotations__": {"x": int}, "__axioms__": [dx.axiom(expr)]},

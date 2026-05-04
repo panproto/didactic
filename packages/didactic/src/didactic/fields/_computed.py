@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 
     from didactic.types._typing import FieldValue
 
-
 _COMPUTED_MARKER_ATTR = "__didactic_computed__"
 
 

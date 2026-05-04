@@ -96,7 +96,6 @@ class ModelConfig:
 DEFAULT_CONFIG = ModelConfig()
 """The configuration applied to a Model that does not specify one."""
 
-
 __all__ = [
     "DEFAULT_CONFIG",
     "ExtraPolicy",

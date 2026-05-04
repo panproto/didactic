@@ -1,9 +1,3 @@
-# Wraps panproto's ``Repository`` whose method signatures
-# (``log() -> list[dict[str, object]]``, ``resolve_ref() -> str | None``,
-# ``add(target: Schema)``) don't line up exactly with didactic's
-# narrower public surface. The runtime contract is honoured; the
-# stub-side narrowing is deferred. Tracked in panproto/didactic#1.
-# pyright: reportReturnType=false, reportArgumentType=false
 """Filesystem-backed VCS for panproto schemas.
 
 Wraps ``panproto.Repository`` with a didactic-shaped public surface.
@@ -36,7 +30,7 @@ panproto.Repository : the wrapped runtime type.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from os import PathLike
@@ -199,7 +193,7 @@ class Repository:
             The exact shape is panproto-defined; callers that depend
             on specific keys should consult panproto's documentation.
         """
-        return list(self._inner.log())
+        return cast("list[JsonObject]", list(self._inner.log()))
 
     def resolve_ref(self, ref: str) -> str:
         """Resolve a ref expression to a commit id.
@@ -217,9 +211,15 @@ class Repository:
         Raises
         ------
         panproto.VcsError
-            If ``ref`` does not resolve to a commit.
+            If ``ref`` does not resolve to a commit, or returns ``None``.
         """
-        return self._inner.resolve_ref(ref)
+        result = self._inner.resolve_ref(ref)
+        if result is None:
+            import panproto  # noqa: PLC0415
+
+            msg = f"ref {ref!r} did not resolve to a commit"
+            raise panproto.VcsError(msg)
+        return result
 
     # mutation ------------------------------------------------------
 
@@ -244,7 +244,9 @@ class Repository:
         if isinstance(target, type) and issubclass(target, Model):
             self._inner.add(schema_from_model(target))
             return
-        self._inner.add(target)
+        # already-narrowed by the isinstance branch above; only the
+        # ``Schema`` arm of the union is left.
+        self._inner.add(cast("panproto.Schema", target))
 
     def commit(
         self,

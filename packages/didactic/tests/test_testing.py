@@ -4,7 +4,6 @@
 # ``backward`` with parameter names matching the test's domain
 # (e.g., ``user``, ``email``) rather than the base class's ``a``
 # / ``b``. Tracked in panproto/didactic#1.
-# pyright: reportIncompatibleMethodOverride=false
 
 import pytest
 from hypothesis import strategies as st
@@ -29,7 +28,7 @@ class IdentityIso(dx.Iso[User, User]):
         return u
 
 
-class TruncateBio(dx.Lens[User, User]):
+class TruncateBio(dx.Lens[User, User, str]):
     """Truncate bio to ``n`` chars; complement carries the tail."""
 
     def __init__(self, n: int) -> None:
@@ -44,7 +43,6 @@ class TruncateBio(dx.Lens[User, User]):
 
 
 users = st.builds(User, id=st.text(max_size=20), bio=st.text(max_size=50))
-
 
 # -- verify_iso ----------------------------------------------------
 
@@ -74,7 +72,7 @@ def test_check_lens_laws_passes_for_truncate_bio() -> None:
 
 
 def test_check_lens_laws_catches_a_bad_lens() -> None:
-    class BadLens(dx.Lens[User, User]):
+    class BadLens(dx.Lens[User, User, str]):
         def forward(self, u: User) -> tuple[User, str]:
             # drops the tail without storing it in the complement
             return u.with_(bio=u.bio[:5]), ""

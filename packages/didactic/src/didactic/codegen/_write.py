@@ -17,9 +17,6 @@ Examples
 
 # Defensive ``isinstance(payload, bytes)`` on a parameter pyright
 # narrows to ``bytes`` already; runtime callers may bypass.
-# Tracked in panproto/didactic#1.
-# pyright: reportUnnecessaryIsInstance=false
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -96,11 +93,8 @@ def write(
                 ext=ext,
             )
             path = out_path / filename_str
-            payload = model.emit_as(target)  # type: ignore[attr-defined]
-            payload_bytes = (
-                payload if isinstance(payload, bytes) else str(payload).encode("utf-8")
-            )
-            path.write_bytes(payload_bytes)
+            payload = model.emit_as(target)
+            path.write_bytes(payload)
             written[f"{target}/{model.__name__}"] = path.resolve()
     return written
 

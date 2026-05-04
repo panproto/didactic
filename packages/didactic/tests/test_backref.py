@@ -6,7 +6,6 @@ import pytest
 
 import didactic.api as dx
 
-
 # -- model definitions reused across the tests -------------------------
 
 
