@@ -6,7 +6,7 @@ class is cached per type-arg tuple, so repeated subscripts return
 the same class object and its ``Theory`` is built once.
 """
 
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 import pytest
 
@@ -16,18 +16,32 @@ T = TypeVar("T", int, float)
 U = TypeVar("U")
 
 
-class _Range(dx.Model, Generic[T]):
-    """Single-typevar generic with two T-typed required fields."""
+# PEP 695 generic-class syntax for the headline tests; the legacy
+# ``Generic[T]`` mixin form is also supported (``test_generic_legacy_form``).
+class _Range[T2: int | float](dx.Model):
+    """Single-typevar generic with two ``T``-typed required fields."""
+
+    min: T2
+    max: T2
+
+
+class _Pair[A, B](dx.Model):
+    """Two-typevar generic with one ``A``-typed and one ``B``-typed field."""
+
+    left: A
+    right: B
+
+
+class _LegacyRange(dx.Model, Generic[T]):  # noqa: UP046
+    """Same shape as ``_Range`` but written with the ``Generic[T]`` mixin.
+
+    Uses the legacy syntax deliberately to verify that path still
+    resolves correctly; ``noqa: UP046`` keeps ruff from rewriting it
+    to PEP 695 form.
+    """
 
     min: T
     max: T
-
-
-class _Pair(dx.Model, Generic[T, U]):
-    """Two-typevar generic with one T-typed and one U-typed field."""
-
-    left: T
-    right: U
 
 
 def test_generic_subscript_returns_subclass_not_alias() -> None:
@@ -126,10 +140,133 @@ def test_subscript_on_non_generic_model_raises() -> None:
     class _Plain(dx.Model):
         x: int
 
-    # A plain Model has no ``__parameters__``; subscript falls through.
-    # The exact return type isn't a Model class, but the call must not
-    # raise ``TypeError``.
-    try:
+    # A plain Model has no ``__parameters__``; subscript falls through
+    # to the upstream ``__class_getitem__`` machinery (or our own
+    # explicit ``TypeError`` when no ancestor defines one).
+    import contextlib
+
+    with contextlib.suppress(TypeError):
         _Plain[int]  # type: ignore[misc]
-    except TypeError:
-        pass  # accepted; the typing machinery refuses non-generic subscripts
+
+
+# -- legacy ``Generic[T]`` mixin form --------------------------------------
+
+
+def test_generic_legacy_form_classifies_as_subclass() -> None:
+    """The ``class Foo(dx.Model, Generic[T]): ...`` form also synthesises."""
+    cls = _LegacyRange[int]
+    assert isinstance(cls, type)
+    assert issubclass(cls, _LegacyRange)
+
+
+def test_generic_legacy_form_constructs_with_concrete_type() -> None:
+    instance = _LegacyRange[int](min=0, max=10)
+    assert instance.min == 0
+    assert instance.max == 10
+
+
+# -- defaults and metadata propagation -------------------------------------
+
+
+class _RangeWithDefaults[T2: int | float](dx.Model):
+    """Generic with class-level defaults that the synthesised class inherits.
+
+    The defaults are type-incompatible with ``T2`` until ``T2`` is bound;
+    cast at the boundary so pyright accepts the parent definition.
+    """
+
+    min: T2 = cast("T2", 0)
+    max: T2 = cast("T2", 100)
+
+
+def test_generic_inherits_class_level_defaults() -> None:
+    """Synthesised concrete subclass picks up parent class-level defaults."""
+    instance = _RangeWithDefaults[int]()
+    assert instance.min == 0
+    assert instance.max == 100
+
+
+def test_generic_class_level_default_overridable_at_construction() -> None:
+    instance = _RangeWithDefaults[int](min=5)
+    assert instance.min == 5
+    assert instance.max == 100
+
+
+class _WithFieldMetadata[T2](dx.Model):
+    """Generic with ``dx.field(...)`` metadata to propagate."""
+
+    value: T2 = dx.field(default=cast("T2", 42), description="the value")
+
+
+def test_generic_inherits_field_metadata() -> None:
+    """Synthesised class carries the parent's ``Field``-supplied metadata."""
+    instance = _WithFieldMetadata[int]()
+    assert instance.value == 42
+    spec = _WithFieldMetadata[int].__field_specs__["value"]
+    assert spec.description == "the value"
+
+
+class _WithFactory[T2](dx.Model):
+    """Generic with ``default_factory`` that runs fresh per instance."""
+
+    items: T2 = dx.field(default_factory=lambda: 99)  # type: ignore[arg-type]
+
+
+def test_generic_inherits_default_factory() -> None:
+    instance = _WithFactory[int]()
+    assert instance.items == 99
+
+
+# -- nested TypeVar substitution -------------------------------------------
+
+
+class _TupleHolder[T2](dx.Model):
+    """``tuple[T, ...]`` should substitute to ``tuple[int, ...]``."""
+
+    items: tuple[T2, ...] = ()
+
+
+def test_generic_substitutes_through_tuple() -> None:
+    instance = _TupleHolder[int](items=(1, 2, 3))
+    assert instance.items == (1, 2, 3)
+    back = _TupleHolder[int].model_validate_json(instance.model_dump_json())
+    assert back == instance
+
+
+class _DictHolder[T2](dx.Model):
+    """``dict[str, T]`` should substitute to ``dict[str, int]``."""
+
+    by_name: dict[str, T2] = dx.field(default_factory=lambda: cast("dict[str, T2]", {}))
+
+
+def test_generic_substitutes_through_dict() -> None:
+    instance = _DictHolder[int](by_name={"a": 1, "b": 2})
+    assert instance.by_name == {"a": 1, "b": 2}
+    back = _DictHolder[int].model_validate_json(instance.model_dump_json())
+    assert back == instance
+
+
+class _OptHolder[T2](dx.Model):
+    """``T | None`` should substitute to ``int | None`` and round-trip."""
+
+    value: T2 | None = None
+
+
+def test_generic_substitutes_through_optional() -> None:
+    assert _OptHolder[int]().value is None
+    assert _OptHolder[int](value=42).value == 42
+    assert _OptHolder[int](value=None).value is None
+    holder = _OptHolder[int](value=7)
+    back = _OptHolder[int].model_validate_json(holder.model_dump_json())
+    assert back == holder
+
+
+def test_generic_required_field_with_typevar_inside_container() -> None:
+    """A ``tuple[T, ...]`` field with no default stays required after subscript."""
+
+    class _Required[T2](dx.Model):
+        items: tuple[T2, ...]
+
+    with pytest.raises(dx.ValidationError) as exc:
+        _Required[int].model_validate({})
+    assert any(e.type == "missing_required" for e in exc.value.entries)

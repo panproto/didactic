@@ -34,6 +34,43 @@ flat Theory built from the merged spec; no colimit is involved.
 Inherited axioms (`__axioms__`) are also collected: `B` is checked
 against both its own and `A`'s.
 
+### Inherited defaults
+
+A subclass inherits the parent's defaults verbatim. Re-declaring a
+field on the subclass replaces the inherited spec; if the
+re-declaration omits a default, the field becomes required on the
+subclass (matching dataclass semantics).
+
+```python
+class Base(dx.Model):
+    id: str = "default-id"
+    name: str = "default-name"
+
+
+class Child(Base):
+    extra: str = "x"
+
+
+Child()
+# Child(id='default-id', name='default-name', extra='x')
+
+
+class Override(Base):
+    id: str = "child-id"   # replaces the parent's default
+    # name keeps the parent's "default-name"
+
+
+class Required(Base):
+    id: str   # no default re-declaration -> required
+
+
+Required()  # raises ValidationError: required field 'id' not supplied
+```
+
+The parent's `default_factory`, `description`, `alias`, `examples`,
+and other Field metadata flow through alongside the default. Each
+subclass instance still calls the factory fresh.
+
 ## Multi inheritance
 
 ```python

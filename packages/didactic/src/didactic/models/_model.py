@@ -28,10 +28,21 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import TYPE_CHECKING, ClassVar, Self, TypeVar, cast
+from types import UnionType
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    ClassVar,
+    Self,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
 from uuid import UUID
 
-from didactic.fields._fields import MissingType
+from didactic.fields._fields import MISSING, Field, MissingType
 from didactic.fields._validators import (
     ValidationError,
     ValidationErrorEntry,
@@ -757,13 +768,9 @@ def _parameterise(cls: type[Model], params: object) -> type[Model]:
     base_anns = read_class_annotations(cls)
     new_anns: dict[str, object] = {}
     for fname, ann in base_anns.items():
-        # The annotationlib reader's static return type is
-        # ``type | ForwardRef``; PEP 695 ``Generic[T]`` produces
-        # ``TypeVar`` instances at runtime, so the isinstance check
-        # narrows correctly even though pyright thinks it can't fire.
-        ann_obj: object = ann
-        if isinstance(ann_obj, TypeVar) and ann_obj in substitution:
-            new_anns[fname] = substitution[ann_obj]
+        substituted = _substitute_typevars(ann, substitution)
+        if substituted is not ann:
+            new_anns[fname] = substituted
     if not new_anns:
         return _fallback_subscript(cls, params_tuple)
 
@@ -774,9 +781,141 @@ def _parameterise(cls: type[Model], params: object) -> type[Model]:
         "__module__": cls.__module__,
         "__qualname__": new_name,
     }
+    # Propagate every parent FieldSpec's default and metadata onto the
+    # synthesised class so the metaclass's MRO walk sees them as
+    # own-class defaults. Without this stamp, the substituted-annotation
+    # re-build sees raw_default=MISSING for the synth class and treats
+    # the field as required.
+    parent_specs: dict[str, FieldSpec] = getattr(cls, "__field_specs__", {})
+    for fname in new_anns:
+        spec = parent_specs.get(fname)
+        if spec is None:
+            continue
+        descriptor = _field_descriptor_from_spec(spec)
+        # MISSING is the sentinel meaning "no default and no metadata
+        # to propagate"; the field stays required on the synthesised
+        # class. Any other value (including ``None``) IS the default.
+        if descriptor is not MISSING:
+            namespace[fname] = descriptor
     new_cls = cast("type[Model]", type(new_name, (cls,), namespace))
     cache[params_tuple] = new_cls
     return new_cls
+
+
+def _substitute_typevars(
+    annotation: object, substitution: dict[TypeVar, object]
+) -> object:
+    """Substitute ``TypeVar`` leaves in ``annotation`` against ``substitution``.
+
+    Walks through nested generic shapes and returns a new annotation
+    with every ``TypeVar`` replaced by its concrete type. Returns the
+    original ``annotation`` object when no substitution applies, so
+    callers can use identity comparison to detect changes.
+
+    Handled shapes:
+
+    - bare ``TypeVar`` -> the substitution target.
+    - parameterised generic (``list[T]``, ``tuple[T, U]``,
+      ``tuple[T, ...]``, ``dict[str, T]``, ``frozenset[T]``,
+      ``Embed[T]``, ``Ref[T]``, ``Annotated[T, ...]``, etc.) -> the
+      origin re-subscripted with substituted args.
+    - union (``T | int``, ``Union[T, str]``) -> a new union with each
+      arm substituted.
+    - non-generic types and ``ForwardRef`` -> returned as-is.
+
+    Recursion bottoms out at non-substitutable leaves (real types,
+    forward references, primitive literals).
+    """
+    # bare TypeVar leaf
+    if isinstance(annotation, TypeVar):
+        return substitution.get(annotation, annotation)
+
+    args = get_args(annotation)
+    if not args:
+        return annotation
+
+    new_args = tuple(_substitute_typevars(a, substitution) for a in args)
+    if new_args == args:
+        return annotation
+
+    origin = get_origin(annotation)
+    # PEP 604 / typing union: rebuild via ``typing.Union[(...)]`` which
+    # accepts a tuple of arms and produces the appropriate union form.
+    # Ruff prefers ``X | Y``, but that can't be expressed for a runtime
+    # tuple of arms; ``noqa: UP007`` keeps the dynamic form.
+    if origin in {Union, UnionType}:
+        return Union[new_args]  # noqa: UP007
+    # ``Annotated[T, *meta]`` keeps its metadata tuple. Pyright's
+    # static check on ``Annotated[<dynamic-tuple>]`` requires the args
+    # to be statically known. Route through ``typing._SpecialForm``'s
+    # subscript via the standard ``[...]`` syntax wrapped in ``cast``
+    # to a plain subscriptable; the runtime construction works because
+    # ``obj[a, b, c]`` is sugar for ``obj.__getitem__((a, b, c))``.
+    if origin is Annotated:
+        meta = args[1:]
+        new_base = new_args[0]
+        if new_base is args[0]:
+            return annotation
+        # ``Annotated`` is a ``typing._SpecialForm`` whose ``__getitem__``
+        # accepts a tuple ``(base, *meta)``. The subscript syntax compiles
+        # to that call exactly; pyright doesn't model the special form, so
+        # cast to a subscriptable proxy.
+        annotated_subscript: object = Annotated
+        return cast("object", annotated_subscript[(new_base, *meta)])  # type: ignore[index]
+    # Generic alias: re-subscript the origin with the new args.
+    # ``tuple[T, ...]`` keeps the Ellipsis sentinel verbatim because
+    # ``Ellipsis`` is not a TypeVar (substitution returns it unchanged).
+    if origin is None:
+        return annotation
+    if not new_args:
+        return annotation
+    try:
+        return origin[new_args[0]] if len(new_args) == 1 else origin[new_args]
+    except TypeError:
+        return annotation
+
+
+def _field_descriptor_from_spec(spec: FieldSpec) -> object:
+    """Reconstruct a ``Field`` descriptor (or bare default) from a ``FieldSpec``.
+
+    Used by ``_parameterise`` to propagate a generic-parent's defaults
+    and metadata onto the synthesised concrete subclass. Returns the
+    sentinel ``MISSING`` when the parent spec carried neither a
+    default nor any metadata that needs to round-trip through
+    ``Field``: in that case the field stays required on the
+    synthesised class, matching the parent's behaviour. Otherwise
+    returns either the bare default value (for plain ``f: T = 0``)
+    or a fully-populated ``Field`` descriptor (for any spec carrying
+    metadata beyond a default).
+    """
+    has_default = spec.default is not MISSING
+    has_factory = spec.default_factory is not None
+    has_metadata = bool(
+        spec.alias
+        or spec.description
+        or spec.examples
+        or spec.deprecated
+        or spec.nominal
+        or spec.converter
+        or spec.usage_mode != "readwrite"
+        or spec.extras
+    )
+    if not (has_default or has_factory or has_metadata):
+        return MISSING
+    if has_default and not has_metadata and not has_factory:
+        return spec.default
+    return Field(
+        default=spec.default,
+        default_factory=spec.default_factory,
+        converter=spec.converter,
+        alias=spec.alias,
+        description=spec.description,
+        examples=spec.examples,
+        deprecated=spec.deprecated,
+        nominal=spec.nominal,
+        usage_mode=spec.usage_mode,
+        extras=dict(spec.extras) if spec.extras else None,
+    )
 
 
 def _fallback_subscript(cls: type[Model], params: object) -> type[Model]:
@@ -813,7 +952,7 @@ def _fallback_subscript(cls: type[Model], params: object) -> type[Model]:
     raise TypeError(msg)
 
 
-def _to_json_safe(value: FieldValue | JsonValue) -> JsonValue:  # noqa: PLR0911
+def _to_json_safe(value: FieldValue | JsonValue) -> JsonValue:
     """Recursively coerce a decoded value into a JSON-encodable form.
 
     Parameters

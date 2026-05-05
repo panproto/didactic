@@ -13,39 +13,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ``ModelConfig.extra="ignore"`` is honoured: keyword arguments at
   construction (and dict keys at ``model_validate``) that don't match
-  a declared field are silently dropped. ``with_()`` remains strict;
-  an unknown kwarg there is always a programming error. ([#11])
-- Generic Models auto-parameterise on subscript. ``class Range(dx.Model,
-  Generic[T]): min: T; max: T`` followed by ``Range[int](min=0, max=10)``
-  returns an instance of a synthesised concrete subclass. The
-  synthesised class is cached per type-arg tuple, so repeated
+  a declared field are silently dropped. ``with_()`` stays strict
+  regardless; an unknown kwarg there is always a programming error.
+  ([#11])
+- Generic Models auto-parameterise on subscript. Both PEP 695 syntax
+  (``class Range[T: int | float](dx.Model): ...``) and the legacy
+  ``Generic[T]`` mixin form work. ``Range[int](min=0, max=10)`` returns
+  an instance of a synthesised concrete subclass; the subclass is
+  cached per type-arg tuple on the generic parent so repeated
   subscripts return the same class object and its ``Theory`` is built
-  once. Only bare ``TypeVar`` annotations are substituted; nested
-  shapes (``items: tuple[T, ...]``) stay unsubstituted and raise the
-  existing ``TypeVar``-encode error. ([#12])
-- ``read_class_annotations`` is now part of the public surface
-  (lifted from the underscore-prefixed ``_read_class_annotations``)
-  and the metaclass's annotation-reader return type widens to
+  once. Substitution walks through nested generic shapes:
+  ``tuple[T, ...]``, ``dict[str, T]``, ``T | None``,
+  ``Annotated[T, *meta]``, ``Embed[T]``, ``Ref[T]``, and unions of
+  these are all rewritten correctly. Class-level defaults
+  (``min: T = 0``) and ``dx.field(...)`` metadata (``default``,
+  ``default_factory``, ``description``, ``alias``, ``examples``,
+  ``deprecated``, ``nominal``, ``usage_mode``, ``extras``,
+  ``converter``) propagate from the generic parent onto the
+  synthesised subclass. ([#12])
+- ``read_class_annotations`` is part of the public surface (lifted
+  from the underscore-prefixed ``_read_class_annotations``) and the
+  metaclass's annotation-reader return type is
   ``dict[str, type | TypeVar | ForwardRef]`` to reflect what the
-  PEP 695 generic-parameter path actually produces.
+  PEP 695 generic-parameter path produces.
 
 ### Fixed
 
-- Inherited field defaults are no longer dropped on subclass.
-  ``Child(Base)`` where ``Base`` declares ``id: str = "default-id"``
-  inherits the default. ``ModelMeta.collect_field_specs`` previously
-  re-read every annotation from ``klass.__dict__`` while walking the
-  MRO, but defaults are stripped from ``__dict__`` during the parent's
-  own class creation; the MRO walk now copies the parent's
-  already-finalised ``FieldSpec`` for inherited fields and only
-  re-builds specs for the target class's own annotations. ([#13])
+- Inherited field defaults survive on subclass. ``Child(Base)`` where
+  ``Base`` declares ``id: str = "default-id"`` constructs cleanly
+  with the inherited default. ``ModelMeta.collect_field_specs`` walks
+  ancestor classes by copying their already-finalised ``FieldSpec``;
+  it only re-runs ``_build_field_spec`` for the target class's own
+  annotations. (Reading ``__dict__`` for ancestor classes lost their
+  defaults because the metaclass strips field defaults from the
+  class dict at the end of each Model's class-creation step.) ([#13])
+- The deferred-TypeVar branch in ``_build_field_spec`` carries
+  through every ``Field`` attribute (default, default_factory,
+  converter, alias, description, examples, deprecated, nominal,
+  usage_mode, extras), so a generic with ``value: T = dx.field(default=42,
+  description="...")`` keeps that metadata available for
+  parameterisation.
 
 ### Removed
 
 - The leftover ``# Tracked in panproto/didactic#1.`` comment blocks
-  from ``didactic#1``'s suppression unwind are stripped. The blocks
-  documented suppressions that no longer exist; they were not
-  flagged in CI but accumulated as documentation rot.
+  from the v0.3.2 suppression unwind are stripped from every file in
+  the workspace. They documented suppressions that no longer exist.
 
 [#11]: https://github.com/panproto/didactic/issues/11
 [#12]: https://github.com/panproto/didactic/issues/12

@@ -2,11 +2,14 @@
 
 # Test class is registered via metaclass side effect; the local name is
 # deliberately discarded.
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 import didactic.api as dx
+
+if TYPE_CHECKING:
+    from didactic.types._typing import FieldValue
 
 
 def test_default_config_present_on_plain_model() -> None:
@@ -146,8 +149,6 @@ def test_extra_ignore_with_method_still_strict() -> None:
     instance = _Lenient(known=1)
     # ``with_`` is statically typed; a dynamically-built kwargs dict
     # bypasses the keyword-name check the runtime guard tests.
-    from didactic.types._typing import FieldValue  # noqa: PLC0415
-
     bad_kwargs: dict[str, FieldValue] = {"unknown": 2}
     with pytest.raises(dx.ValidationError) as exc:
         instance.with_(**bad_kwargs)
