@@ -24,16 +24,56 @@ keyword (or the expression text, when no message is given).
 
 ## Expression syntax
 
-Axiom expressions use the panproto-Expr surface syntax. The set
-didactic's evaluator currently supports:
+Axiom expressions use the panproto-Expr surface syntax with a
+small set of Python-friendly synonyms applied at parse time. Either
+spelling works; pick whichever reads more naturally for the constraint.
 
-| operator | example |
+| category | examples |
 | --- | --- |
-| equality | `x == 0`, `x /= 0` |
+| equality | `x == 0`, `x /= 0`, `x != 0` |
 | ordering | `x < 0`, `x <= 0`, `x > 0`, `x >= 0` |
-| boolean | `a && b`, `a || b`, `not x` |
+| boolean | `a && b`, `a or b`, `not x` |
 | arithmetic | `x + y`, `x - y`, `x * y`, `x / y`, `x % y`, `-x` |
-| length | `len(xs)` |
+| absent value | `a == null`, `a == None`, `a == Nothing`, `a is null`, `a is not null` |
+| if-then-else | `if cond then x else y` |
+| `let` | `let s = a + b in s > 0` |
+| list literal | `[1, 2, 3]` |
+| field access | `a.b` (resolves via `getattr`) |
+| concat | `xs ++ ys` |
+| length / head / tail / abs | `len xs`, `head xs`, `tail xs`, `abs x` |
+| min / max / sum / and / or / all / any / elem | `min a b`, `elem x xs` |
+| map / filter (with lambda) | `map (\x -> x + 1) xs`, `filter (\x -> x > 0) xs` |
+| `Just` / `Nothing` | `Just x`, `a == Nothing` |
+
+The Python-friendly synonyms are pure surface sugar; they get
+rewritten before parsing:
+
+- `!=`  becomes `/=` (panproto's "not equal").
+- `and` / `or` keywords become `&&` / `||`.
+- `null` / `None` become `Nothing`.
+- `X is null` becomes `X == Nothing`; `X is not null` becomes
+  `X /= Nothing`.
+
+The substitutions respect string literals: nothing inside `"..."` or
+`'...'` is rewritten.
+
+### Optional fields
+
+`T | None` fields hold either a `T` or `None`. To check whether an
+optional field is set, compare to `null` / `None` / `Nothing`:
+
+```python
+class Cfg(dx.Model):
+    bounded: bool = False
+    min_value: float | None = None
+
+    __axioms__ = [
+        dx.axiom(
+            "if bounded then min_value /= null else true",
+            message="bounded models must set min_value",
+        ),
+    ]
+```
 
 The free variables in an axiom must match field names on the Model.
 Inherited fields are visible: an axiom on a base class evaluates
@@ -62,11 +102,12 @@ Tighter(x=200)           # raises (own axiom)
 
 ## What axioms cannot do (yet)
 
-The panproto-Expr surface syntax is broader than the subset didactic
-currently evaluates. Constructs the evaluator does not yet handle
-include `forall`, `exists`, `let`, `case`, lambdas, and graph
-traversal. An axiom using one of those parses successfully but the
-evaluator raises `NotImplementedError` at construction.
+panproto's parser accepts a few constructs that the runtime
+evaluator deliberately does not implement: `forall` and `exists`
+quantifiers, `case`-style multi-arm pattern matching beyond the
+`if/then/else` shape, and graph-traversal builtins. An axiom using
+one of those parses successfully but the evaluator raises
+`NotImplementedError` at construction.
 
 You can still declare such axioms; they are recorded in
 `__class_axioms__` and surface in tooling that walks the Theory's
