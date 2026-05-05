@@ -219,3 +219,63 @@ def test_derived_construct() -> None:
     d = _Derived(id="x")
     assert d.id == "x"
     assert d.name == ""
+
+
+# -- container coercion ----------------------------------------------------
+
+
+class _Span(dx.Model):
+    indices: tuple[int, ...]
+
+
+class _Bag(dx.Model):
+    tags: frozenset[str]
+
+
+# These tests deliberately pass list literals where the field annotation
+# requires tuple/frozenset, to exercise the runtime coercion on the
+# encoder boundary. The type checker is correct to flag the call sites;
+# the carve-outs below are scoped to the assertion under test.
+
+
+def test_tuple_field_accepts_list_input() -> None:
+    """``tuple[T, ...]`` field coerces list input to tuple.
+
+    Mirrors Pydantic's affordance so call sites migrating across
+    don't have to rewrite every ``indices=[0, 1, 2]`` literal.
+    """
+    s = _Span(indices=[0, 1, 2])  # type: ignore[arg-type]
+    assert s.indices == (0, 1, 2)
+    assert isinstance(s.indices, tuple)
+
+
+def test_tuple_field_with_accepts_list_input() -> None:
+    """The same coercion applies on ``.with_(...)``."""
+    s = _Span(indices=(0,)).with_(indices=[1, 2, 3])  # type: ignore[arg-type]
+    assert s.indices == (1, 2, 3)
+
+
+def test_tuple_field_scalar_raises_validation_error_with_field_name() -> None:
+    """A non-iterable input surfaces as ``ValidationError``, not bare assert."""
+    with pytest.raises(dx.ValidationError) as exc:
+        _Span(indices=42)  # type: ignore[arg-type]
+    entries = exc.value.entries
+    assert len(entries) == 1
+    assert entries[0].loc == ("indices",)
+    assert entries[0].type == "type_error"
+    assert "tuple" in entries[0].msg
+
+
+def test_frozenset_field_accepts_list_input() -> None:
+    """``frozenset[T]`` field coerces list input to frozenset."""
+    b = _Bag(tags=["a", "b", "a"])  # type: ignore[arg-type]
+    assert b.tags == frozenset({"a", "b"})
+
+
+def test_frozenset_field_string_raises_validation_error() -> None:
+    """A bare string is rejected even though it is iterable."""
+    with pytest.raises(dx.ValidationError) as exc:
+        _Bag(tags="abc")  # type: ignore[arg-type]
+    entries = exc.value.entries
+    assert entries[0].loc == ("tags",)
+    assert entries[0].type == "type_error"

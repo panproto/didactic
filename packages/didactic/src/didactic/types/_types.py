@@ -1357,8 +1357,18 @@ def _make_list_encoder(
 ) -> Callable[[FieldValue], Encoded]:
     def enc(v: FieldValue) -> Encoded:
         # JSON-encode the encoded items; the panproto string is therefore
-        # always a valid JSON array literal.
-        assert isinstance(v, tuple)
+        # always a valid JSON array literal. Accept list as well as tuple
+        # so call sites migrating from Pydantic (which transparently
+        # coerces list to tuple for tuple-typed fields) do not have to
+        # rewrite every ``indices=[0, 1, 2]`` literal. Reject anything
+        # else with ``TypeError`` so the caller's ``ValidationError``
+        # carries the field name instead of a bare ``AssertionError``.
+        if not isinstance(v, (tuple, list)):
+            msg = (
+                f"expected tuple or list for tuple[T, ...] field, "
+                f"got {type(v).__name__}"
+            )
+            raise TypeError(msg)
         return json.dumps([inner_encode(item) for item in v])
 
     return enc
@@ -1384,7 +1394,20 @@ def _classify_frozenset(args: tuple[TypeForm, ...]) -> TypeTranslation:
     inner = classify(args[0])
 
     def enc(v: FieldValue) -> Encoded:
-        assert isinstance(v, frozenset)
+        # Accept any non-string iterable that can lawfully be coerced to
+        # ``frozenset`` (set, frozenset, list, tuple). The same reasoning
+        # as the tuple encoder applies: Pydantic coerces, callers
+        # migrating across should not have to rewrite every literal, and
+        # rejecting via ``TypeError`` keeps the failure inside
+        # ``ValidationError``.
+        if isinstance(v, (str, bytes, bytearray)) or not isinstance(
+            v, (frozenset, set, list, tuple)
+        ):
+            msg = (
+                f"expected frozenset, set, list, or tuple for frozenset[T] "
+                f"field, got {type(v).__name__}"
+            )
+            raise TypeError(msg)
         return json.dumps(sorted(inner.encode(item) for item in v))
 
     def dec(s: Encoded) -> frozenset[FieldValue]:

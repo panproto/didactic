@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-05
+
+### Fixed
+
+- ``tuple[T, ...]``-typed fields now coerce list input to tuple at the
+  encoder boundary instead of raising a bare ``AssertionError``.
+  Mirrors Pydantic's affordance so call sites migrating across don't
+  have to rewrite every ``indices=[0, 1, 2]`` literal. Non-iterable
+  input still fails, but as a ``dx.ValidationError`` carrying the
+  field name and a ``type_error`` entry, not as an ``AssertionError``
+  from inside the encoder. ([#15])
+- ``frozenset[T]``-typed fields coerce list, set, and tuple input the
+  same way. Bare strings are still rejected (they would otherwise
+  silently explode into ``frozenset({"a", "b", "c"})``).
+
+[#15]: https://github.com/panproto/didactic/issues/15
+
 ## [0.4.0] - 2026-05-05
 
 ### Added
