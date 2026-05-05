@@ -44,7 +44,16 @@ didactic.models._meta.ModelMeta : the metaclass; unchanged.
 from __future__ import annotations
 
 import annotationlib
-from typing import TYPE_CHECKING, ClassVar, Literal, Self, cast, get_args, get_origin
+import sys
+from typing import (
+    TYPE_CHECKING,
+    ClassVar,
+    Literal,
+    Self,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from didactic.fields._validators import ValidationError, ValidationErrorEntry
 from didactic.models._model import Model
@@ -139,6 +148,12 @@ class TaggedUnion(Model):
         # NOTE: we read annotations directly here rather than through the
         # metaclass's `__field_specs__` because `__init_subclass__` fires
         # *during* the metaclass's __new__, before __field_specs__ is set.
+        # FORWARDREF gives us un-evaluated forms when the class uses
+        # ``from __future__ import annotations``; the discriminator field
+        # is then re-resolved in the class's defining module so qualified
+        # spellings (``typing.Literal[...]``) and aliased imports
+        # (``from typing import Literal as L``) are handled the same as
+        # the bare ``Literal[...]`` form.
         annotations = annotationlib.get_annotations(
             cls,
             format=annotationlib.Format.FORWARDREF,
@@ -150,12 +165,16 @@ class TaggedUnion(Model):
             )
             raise TypeError(msg)
 
+        disc_annotation = _resolve_discriminator_annotation(
+            cls, annotations[disc_field]
+        )
+
         # extract the Literal value(s)
-        values = _literal_values(annotations[disc_field])
+        values = _literal_values(disc_annotation)
         if not values:
             msg = (
                 f"variant {cls.__name__}.{disc_field} must be annotated as "
-                f"Literal[...] with at least one value; got {annotations[disc_field]!r}"
+                f"Literal[...] with at least one value; got {disc_annotation!r}"
             )
             raise TypeError(msg)
 
@@ -250,6 +269,40 @@ def _literal_values(annotation: Opaque) -> tuple[FieldValue, ...]:
     if get_origin(annotation) is Literal:
         return get_args(annotation)
     return ()
+
+
+def _resolve_discriminator_annotation(cls: type, raw: Opaque) -> Opaque:
+    """Return the live annotation object for ``cls.disc_field``.
+
+    Under ``from __future__ import annotations`` (or any context where
+    the class's ``__annotations__`` carries strings), the raw entry
+    will not satisfy ``get_origin(...) is Literal``. Evaluate the
+    string in the class's defining module so qualified spellings
+    (``typing.Literal[...]``), aliased imports
+    (``from typing import Literal as L``), and bare ``Literal[...]``
+    all reach the same live ``Literal`` object.
+
+    Only the discriminator's own annotation is evaluated; other
+    fields on the class may legitimately carry forward references
+    that don't resolve at class-creation time, and resolving them
+    here would mask those into spurious failures of this check.
+
+    The raw annotation is returned unchanged when evaluation fails;
+    the caller surfaces the original value in the error message,
+    which is friendlier than a stray ``NameError``.
+    """
+    if get_origin(raw) is Literal:
+        return raw
+    if not isinstance(raw, str):
+        return raw
+    module = sys.modules.get(getattr(cls, "__module__", ""))
+    if module is None:
+        return raw
+    try:
+        evaluated = eval(raw, vars(module))
+    except Exception:
+        return raw
+    return cast("Opaque", evaluated)
 
 
 __all__ = [

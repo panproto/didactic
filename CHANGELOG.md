@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-05-05
+
+### Fixed
+
+- ``dx.TaggedUnion`` variant discriminator now accepts every spelling
+  of ``Literal[...]``: bare ``Literal["x"]``, qualified
+  ``typing.Literal["x"]``, and aliased imports
+  (``from typing import Literal as L``). Under
+  ``from __future__ import annotations`` the discriminator
+  annotation arrives as a string; the variant check now evaluates
+  that string in the class's defining module before applying the
+  ``get_origin(...) is Literal`` check, instead of pattern-matching
+  on the source text. Useful when the variant Model has a class
+  also named ``Literal`` (e.g. an AST module exporting ``Literal``,
+  ``Variable``, ``BinaryOp`` from a discriminator-tagged ``ASTNode``
+  union root) so the user can keep the public API name. ([#18])
+
+[#18]: https://github.com/panproto/didactic/issues/18
+
 ## [0.4.2] - 2026-05-05
 
 ### Fixed
