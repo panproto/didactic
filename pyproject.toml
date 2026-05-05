@@ -95,8 +95,11 @@ extend-ignore-names = ["A", "B", "T", "P"]
 # obscures the table of cases or breaks the closure boundary.
 "**/types/_types.py" = ["PLR0911", "PLR0912", "PLR0915"]
 # model_dump's option matrix is genuinely n-flag and requires per-flag
-# checks; splitting into helpers would just hide the same logic
-"**/models/_model.py" = ["PLR0912"]
+# checks; splitting into helpers would just hide the same logic.
+# ``_substitute_typevars`` shape-dispatches across many origin variants
+# (TypeVar, Union, Annotated, parametric generic, leaf, missing-args);
+# flattening into helpers obscures the table of cases.
+"**/models/_model.py" = ["PLR0911", "PLR0912"]
 # tests aren't third-party-import-restricted
 "packages/didactic-settings/tests/*.py" = ["TC001", "TC002", "TC003"]
 # fastapi handler does runtime-only imports inside the function body

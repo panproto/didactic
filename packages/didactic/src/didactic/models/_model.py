@@ -28,15 +28,26 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import TYPE_CHECKING, ClassVar, Self, cast
+from types import UnionType
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    ClassVar,
+    Self,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
 from uuid import UUID
 
-from didactic.fields._fields import MissingType
+from didactic.fields._fields import MISSING, Field, MissingType
 from didactic.fields._validators import (
     ValidationError,
     ValidationErrorEntry,
 )
-from didactic.models._meta import ModelMeta
+from didactic.models._meta import ModelMeta, read_class_annotations
 from didactic.models._storage import DictStorage
 
 if TYPE_CHECKING:
@@ -89,6 +100,42 @@ class Model(metaclass=ModelMeta):
     __field_specs__: ClassVar[dict[str, FieldSpec]] = {}
     __computed_fields__: ClassVar[frozenset[str]] = frozenset()
     __class_axioms__: ClassVar[tuple[Axiom, ...]] = ()
+
+    def __class_getitem__(cls, params: object) -> type[Model]:
+        """Auto-parameterise a generic Model on subscript.
+
+        ``Range[int]`` returns a concrete subclass of ``Range`` whose
+        ``T``-typed fields use ``int``. The synthesised class is
+        cached per ``cls`` and per type-arg tuple, so repeated
+        subscripts return the same class object (and that class's
+        ``Theory`` is built once).
+
+        Falls back to typing's machinery when ``cls`` declares no
+        ``TypeVar`` field annotations to substitute (the subscript
+        becomes a structural ``_GenericAlias`` for type checkers
+        only, no runtime synthesis).
+
+        Parameters
+        ----------
+        params
+            A type or a tuple of types matching the class's
+            ``__parameters__`` arity.
+
+        Returns
+        -------
+        type
+            A synthesised concrete subclass when at least one field
+            annotation can be substituted; otherwise the upstream
+            ``_GenericAlias``.
+
+        Notes
+        -----
+        Only bare ``TypeVar`` annotations are substituted. Annotations
+        that contain a ``TypeVar`` nested inside a generic shape
+        (e.g. ``items: tuple[T, ...]``) stay unsubstituted and
+        surface the existing ``TypeVar``-encode error.
+        """
+        return _parameterise(cls, params)
 
     def __init__(self, **kwargs: FieldValue | JsonValue) -> None:
         """Construct a Model from keyword arguments.
@@ -153,8 +200,14 @@ class Model(metaclass=ModelMeta):
         from didactic.fields._derived import derived_field_names  # noqa: PLC0415
 
         derived_names = derived_field_names(cls)
+        # ``extra="ignore"`` silently drops unknown kwargs at construction.
+        # ``with_()`` stays strict regardless: an unknown kwarg there is
+        # always a programming error (see ``Model.with_``).
+        ignore_extra = cls.__model_config__.extra == "ignore"
         for k in kwargs:
             if k in specs or k in computed_names or k in derived_names:
+                continue
+            if ignore_extra:
                 continue
             errors.append(
                 ValidationErrorEntry(
@@ -681,7 +734,225 @@ class Model(metaclass=ModelMeta):
 # ---------------------------------------------------------------------------
 
 
-def _to_json_safe(value: FieldValue | JsonValue) -> JsonValue:  # noqa: PLR0911
+def _parameterise(cls: type[Model], params: object) -> type[Model]:
+    """Synthesise (or fetch from cache) a concrete subclass of a generic ``cls``.
+
+    Implementation of ``Model.__class_getitem__``; lifted to a
+    module-level function so the static-type narrowing of ``params``
+    isn't trapped behind a class scope's restricted self/cls vocabulary.
+    """
+    params_tuple: tuple[object, ...] = (
+        cast("tuple[object, ...]", params) if isinstance(params, tuple) else (params,)
+    )
+
+    typevars: tuple[TypeVar, ...] = cast(
+        "tuple[TypeVar, ...]", getattr(cls, "__parameters__", ())
+    )
+    if not typevars or len(typevars) != len(params_tuple):
+        return _fallback_subscript(cls, params_tuple)
+
+    cache: dict[tuple[object, ...], type[Model]] | None = cls.__dict__.get(
+        "__parameterised_cache__"
+    )
+    if cache is None:
+        cache = {}
+        # ``setattr`` rather than direct assignment so the metaclass's
+        # frozen-class guard doesn't fire on this private bookkeeping
+        # attribute (it's not in ``__field_specs__``).
+        cls.__parameterised_cache__ = cache  # type: ignore[attr-defined]
+    cached = cache.get(params_tuple)
+    if cached is not None:
+        return cached
+
+    substitution: dict[TypeVar, object] = dict(zip(typevars, params_tuple, strict=True))
+    base_anns = read_class_annotations(cls)
+    new_anns: dict[str, object] = {}
+    for fname, ann in base_anns.items():
+        substituted = _substitute_typevars(ann, substitution)
+        if substituted is not ann:
+            new_anns[fname] = substituted
+    if not new_anns:
+        return _fallback_subscript(cls, params_tuple)
+
+    arg_names = ", ".join(getattr(p, "__name__", str(p)) for p in params_tuple)
+    new_name = f"{cls.__name__}[{arg_names}]"
+    namespace: dict[str, object] = {
+        "__annotations__": new_anns,
+        "__module__": cls.__module__,
+        "__qualname__": new_name,
+    }
+    # Propagate every parent FieldSpec's default and metadata onto the
+    # synthesised class so the metaclass's MRO walk sees them as
+    # own-class defaults. Without this stamp, the substituted-annotation
+    # re-build sees raw_default=MISSING for the synth class and treats
+    # the field as required.
+    parent_specs: dict[str, FieldSpec] = getattr(cls, "__field_specs__", {})
+    for fname in new_anns:
+        spec = parent_specs.get(fname)
+        if spec is None:
+            continue
+        descriptor = _field_descriptor_from_spec(spec)
+        # MISSING is the sentinel meaning "no default and no metadata
+        # to propagate"; the field stays required on the synthesised
+        # class. Any other value (including ``None``) IS the default.
+        if descriptor is not MISSING:
+            namespace[fname] = descriptor
+    new_cls = cast("type[Model]", type(new_name, (cls,), namespace))
+    cache[params_tuple] = new_cls
+    return new_cls
+
+
+def _substitute_typevars(
+    annotation: object, substitution: dict[TypeVar, object]
+) -> object:
+    """Substitute ``TypeVar`` leaves in ``annotation`` against ``substitution``.
+
+    Walks through nested generic shapes and returns a new annotation
+    with every ``TypeVar`` replaced by its concrete type. Returns the
+    original ``annotation`` object when no substitution applies, so
+    callers can use identity comparison to detect changes.
+
+    Handled shapes:
+
+    - bare ``TypeVar`` -> the substitution target.
+    - parameterised generic (``list[T]``, ``tuple[T, U]``,
+      ``tuple[T, ...]``, ``dict[str, T]``, ``frozenset[T]``,
+      ``Embed[T]``, ``Ref[T]``, ``Annotated[T, ...]``, etc.) -> the
+      origin re-subscripted with substituted args.
+    - union (``T | int``, ``Union[T, str]``) -> a new union with each
+      arm substituted.
+    - non-generic types and ``ForwardRef`` -> returned as-is.
+
+    Recursion bottoms out at non-substitutable leaves (real types,
+    forward references, primitive literals).
+    """
+    # bare TypeVar leaf
+    if isinstance(annotation, TypeVar):
+        return substitution.get(annotation, annotation)
+
+    args = get_args(annotation)
+    if not args:
+        return annotation
+
+    new_args = tuple(_substitute_typevars(a, substitution) for a in args)
+    if new_args == args:
+        return annotation
+
+    origin = get_origin(annotation)
+    # PEP 604 / typing union: rebuild via ``typing.Union[(...)]`` which
+    # accepts a tuple of arms and produces the appropriate union form.
+    # Ruff prefers ``X | Y``, but that can't be expressed for a runtime
+    # tuple of arms; ``noqa: UP007`` keeps the dynamic form.
+    if origin in {Union, UnionType}:
+        return Union[new_args]  # noqa: UP007
+    # ``Annotated[T, *meta]`` keeps its metadata tuple. Pyright's
+    # static check on ``Annotated[<dynamic-tuple>]`` requires the args
+    # to be statically known. Route through ``typing._SpecialForm``'s
+    # subscript via the standard ``[...]`` syntax wrapped in ``cast``
+    # to a plain subscriptable; the runtime construction works because
+    # ``obj[a, b, c]`` is sugar for ``obj.__getitem__((a, b, c))``.
+    if origin is Annotated:
+        meta = args[1:]
+        new_base = new_args[0]
+        if new_base is args[0]:
+            return annotation
+        # ``Annotated`` is a ``typing._SpecialForm`` whose ``__getitem__``
+        # accepts a tuple ``(base, *meta)``. The subscript syntax compiles
+        # to that call exactly; pyright doesn't model the special form, so
+        # cast to a subscriptable proxy.
+        annotated_subscript: object = Annotated
+        return cast("object", annotated_subscript[(new_base, *meta)])  # type: ignore[index]
+    # Generic alias: re-subscript the origin with the new args.
+    # ``tuple[T, ...]`` keeps the Ellipsis sentinel verbatim because
+    # ``Ellipsis`` is not a TypeVar (substitution returns it unchanged).
+    if origin is None:
+        return annotation
+    if not new_args:
+        return annotation
+    try:
+        return origin[new_args[0]] if len(new_args) == 1 else origin[new_args]
+    except TypeError:
+        return annotation
+
+
+def _field_descriptor_from_spec(spec: FieldSpec) -> object:
+    """Reconstruct a ``Field`` descriptor (or bare default) from a ``FieldSpec``.
+
+    Used by ``_parameterise`` to propagate a generic-parent's defaults
+    and metadata onto the synthesised concrete subclass. Returns the
+    sentinel ``MISSING`` when the parent spec carried neither a
+    default nor any metadata that needs to round-trip through
+    ``Field``: in that case the field stays required on the
+    synthesised class, matching the parent's behaviour. Otherwise
+    returns either the bare default value (for plain ``f: T = 0``)
+    or a fully-populated ``Field`` descriptor (for any spec carrying
+    metadata beyond a default).
+    """
+    has_default = spec.default is not MISSING
+    has_factory = spec.default_factory is not None
+    has_metadata = bool(
+        spec.alias
+        or spec.description
+        or spec.examples
+        or spec.deprecated
+        or spec.nominal
+        or spec.converter
+        or spec.usage_mode != "readwrite"
+        or spec.extras
+    )
+    if not (has_default or has_factory or has_metadata):
+        return MISSING
+    if has_default and not has_metadata and not has_factory:
+        return spec.default
+    return Field(
+        default=spec.default,
+        default_factory=spec.default_factory,
+        converter=spec.converter,
+        alias=spec.alias,
+        description=spec.description,
+        examples=spec.examples,
+        deprecated=spec.deprecated,
+        nominal=spec.nominal,
+        usage_mode=spec.usage_mode,
+        extras=dict(spec.extras) if spec.extras else None,
+    )
+
+
+def _fallback_subscript(cls: type[Model], params: object) -> type[Model]:
+    """Defer a non-synthesisable ``cls[params]`` to typing's machinery.
+
+    When ``cls`` declares no ``Generic[...]`` parameters, or when
+    ``params`` doesn't substitute any of its TypeVar field
+    annotations, the subscript falls through here. ``Generic`` (if
+    present in the MRO) returns a ``_GenericAlias`` for the static
+    type checker; otherwise typing raises ``TypeError``.
+    """
+    # Walk the MRO past ``Model`` itself to find an ancestor's
+    # ``__class_getitem__`` (typically ``Generic.__class_getitem__``
+    # when the user wrote ``class Foo(dx.Model, Generic[T]): ...``).
+    # If no ancestor defines it, raise the same error typing would
+    # have raised for a non-generic class.
+    for base in cls.__mro__:
+        if base is Model:
+            continue
+        descriptor = base.__dict__.get("__class_getitem__")
+        if descriptor is None:
+            continue
+        # The descriptor is a classmethod (Generic), classmethod_descriptor
+        # (object), or function. ``__get__(None, cls)`` rebinds it to
+        # ``cls`` so the call invokes ``base.__class_getitem__(cls, params)``
+        # with ``cls`` as the receiver, matching the lookup ``cls[params]``
+        # would have produced if ``Model`` were not in the MRO.
+        rebound = descriptor.__get__(None, cls)
+        return cast("type[Model]", rebound(params))
+    msg = (
+        f"{cls.__name__!r} does not declare any ``Generic[...]`` "
+        "type parameters; subscripting is not supported."
+    )
+    raise TypeError(msg)
+
+
+def _to_json_safe(value: FieldValue | JsonValue) -> JsonValue:
     """Recursively coerce a decoded value into a JSON-encodable form.
 
     Parameters

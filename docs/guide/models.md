@@ -101,3 +101,43 @@ Every Model exposes:
 - `__computed_fields__`: the names of `@computed` properties.
 - `__theory__`: the lazily-built `panproto.Theory` (computed on
   first access).
+
+## Configuration
+
+Class-level configuration goes in [ModelConfig][didactic.api.ModelConfig],
+either as keyword arguments on the class header or as a
+`__model_config__` attribute on the class body. Both forms are
+equivalent; header keywords take precedence on conflict.
+
+```python
+class Strict(dx.Model, extra="forbid"):
+    """Default policy: an unknown keyword at construction raises."""
+    id: str
+
+
+class Lenient(dx.Model, extra="ignore"):
+    """Drops unknown keys at construction without raising."""
+    id: str
+```
+
+### `extra` policy
+
+| value | behaviour at construction |
+| --- | --- |
+| `"forbid"` (default) | unknown keys raise `ValidationError` with a `extra_field` entry |
+| `"ignore"` | unknown keys are silently dropped; they never enter storage and never appear in `model_dump()` |
+| `"allow"` | reserved; raises `NotImplementedError` at config construction |
+
+`"ignore"` is the right policy for a Model that ingests external
+payloads with vendor-specific or schema-evolved fields you don't want
+to enumerate. Round-trips are clean: dropped keys never resurrect.
+
+```python
+record = Lenient.model_validate({"id": "u1", "vendor_added": "telemetry"})
+record.model_dump()
+# {'id': 'u1'}    -- vendor_added is gone
+```
+
+`with_()` stays strict regardless of policy. Naming a field
+explicitly there is always a programming error; the lenient policy
+applies only to construction-from-external-data boundaries.

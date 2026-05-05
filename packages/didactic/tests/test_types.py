@@ -1,10 +1,5 @@
 """Unit tests for the type-translation foundation."""
 
-# Tests pass ``Annotated[T, ...]`` forms to ``classify`` and
-# ``unwrap_annotated``; the static ``TypeForm`` alias doesn't
-# include ``Annotated`` (a typing special form, not a class), but
-# the runtime accepts it. Tracked in panproto/didactic#1.
-
 from __future__ import annotations
 
 from datetime import date, datetime

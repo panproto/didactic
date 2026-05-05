@@ -42,12 +42,6 @@ See Also
 didactic.computed : evaluated every read; not cached.
 """
 
-# Reaches into ``Model._derived_cache`` (a documented Model-internal
-# slot) from a closure attached to the @derived decorator. The
-# ``_`` prefix is conventional for "implementation detail of the
-# Model layer"; the derived-decorator integration is part of that
-# layer. Tracked in panproto/didactic#1.
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast

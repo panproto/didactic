@@ -1,10 +1,3 @@
-# The metaclass passes resolved annotations (``type | TypeVar |
-# ForwardRef``) into ``classify`` and ``_build_field_spec``, which
-# expect the narrower ``TypeForm`` (``type | UnionType``). The
-# runtime contract handles the wider input (the metaclass also
-# accepts string forward refs and TypeVar instances), but pyright
-# can't follow the case split through the dataclass_transform
-# layer. Tracked in panproto/didactic#1.
 """The ``ModelMeta`` metaclass: class-as-Theory derivation.
 
 ``ModelMeta`` runs at class-creation time. It reads each annotated field,
@@ -32,7 +25,14 @@ from __future__ import annotations
 import annotationlib
 import contextlib
 import sys
-from typing import TYPE_CHECKING, ForwardRef, TypeVar, cast, dataclass_transform
+from typing import (
+    TYPE_CHECKING,
+    ForwardRef,
+    TypeVar,
+    cast,
+    dataclass_transform,
+    get_args,
+)
 
 from didactic.axioms._axioms import collect_class_axioms
 from didactic.fields._computed import computed_field_names
@@ -101,7 +101,27 @@ def _deferred_from_json(_: JsonValue) -> FieldValue:
     raise TypeError(msg)
 
 
-def _read_class_annotations(cls: type) -> dict[str, type | ForwardRef]:
+def _annotation_contains_typevar(annotation: object, depth: int = 0) -> bool:
+    """Return True iff ``annotation`` contains a ``TypeVar`` anywhere in its shape.
+
+    Walks parameterised generics (``list[T]``, ``tuple[T, ...]``,
+    ``dict[str, T]``, ``Embed[T]``, ``Annotated[T, ...]``, unions of
+    these) and stops at the first ``TypeVar`` leaf. Depth-bounded so
+    pathological recursive aliases don't loop forever.
+    """
+    if depth > 64:
+        return False
+    if isinstance(annotation, TypeVar):
+        return True
+    args = get_args(annotation)
+    if not args:
+        return False
+    return any(
+        a is not Ellipsis and _annotation_contains_typevar(a, depth + 1) for a in args
+    )
+
+
+def read_class_annotations(cls: type) -> dict[str, type | TypeVar | ForwardRef]:
     """Read a class's annotations through ``annotationlib``, robustly.
 
     Parameters
@@ -147,7 +167,7 @@ def _read_class_annotations(cls: type) -> dict[str, type | ForwardRef]:
     localns: dict[str, Opaque] = dict(vars(cls))
     localns.setdefault(cls.__name__, cls)
 
-    resolved: dict[str, type | ForwardRef] = {}
+    resolved: dict[str, type | TypeVar | ForwardRef] = {}
     for name, ann in raw.items():
         if isinstance(ann, str):
             try:
@@ -206,6 +226,12 @@ def _build_field_spec(
         and annotation.__forward_arg__.isupper()
     ):
         tv_name = annotation.__forward_arg__
+    elif _annotation_contains_typevar(annotation):
+        # Nested TypeVar (e.g. ``items: tuple[T, ...]`` or
+        # ``by_name: dict[str, T]``). Defer the same way as a bare
+        # TypeVar; ``Model.__class_getitem__`` substitutes through
+        # the nested shape on parameterisation.
+        tv_name = "<nested>"
     if tv_name is not None:
         from didactic.types._types import TypeTranslation  # noqa: PLC0415
 
@@ -216,11 +242,32 @@ def _build_field_spec(
             inner_kind="generic",
             from_json=_deferred_from_json,
         )
+        # If the user supplied ``f: T = dx.field(default=..., description=...)``
+        # the Field descriptor's metadata must survive on the deferred spec
+        # so a parameterised subclass can propagate the default and metadata
+        # onto its own (concrete-annotation) FieldSpec. Plain values land in
+        # ``default`` directly.
+        if isinstance(raw_default, Field):
+            return FieldSpec(
+                name=name,
+                annotation=annotation,
+                translation=deferred,
+                default=raw_default.default,
+                default_factory=raw_default.default_factory,
+                converter=raw_default.converter,
+                alias=raw_default.alias,
+                description=raw_default.description,
+                examples=raw_default.examples,
+                deprecated=raw_default.deprecated,
+                nominal=raw_default.nominal,
+                usage_mode=raw_default.usage_mode,
+                extras=dict(raw_default.extras) if raw_default.extras else {},
+            )
         return FieldSpec(
             name=name,
             annotation=annotation,
             translation=deferred,
-            default=raw_default if not isinstance(raw_default, Field) else MISSING,
+            default=raw_default,
             usage_mode="readwrite",
         )
     # Above branches return for ``TypeVar`` / ``ForwardRef`` cases; the
@@ -464,17 +511,33 @@ class ModelMeta(type):
         """
         seen: dict[str, FieldSpec] = {}
 
-        # walk MRO in reverse so derived classes overwrite base entries
+        # walk MRO in reverse so derived classes overwrite base entries.
+        # For ancestor classes the FieldSpec is already finalised
+        # (defaults captured during their own construction); copy the
+        # spec verbatim. For ``target`` itself we re-run
+        # ``_build_field_spec`` because the raw default still lives on
+        # the class dict and hasn't been stripped yet. Reading
+        # ``__dict__`` for ancestor classes would surface no default,
+        # because the metaclass strips field defaults from the class
+        # dict at the end of each Model's class-creation step.
         for klass in reversed(target.__mro__):
             if not isinstance(klass, ModelMeta):
                 continue
-            anns = _read_class_annotations(klass)
-            for fname, ann in anns.items():
-                # skip private / dunder attributes
-                if fname.startswith("_"):
+            if klass is target:
+                anns = read_class_annotations(klass)
+                for fname, ann in anns.items():
+                    if fname.startswith("_"):
+                        continue
+                    raw_default = klass.__dict__.get(fname, MISSING)
+                    seen[fname] = _build_field_spec(fname, ann, raw_default)
+            else:
+                ancestor_specs = getattr(klass, "__field_specs__", None)
+                if ancestor_specs is None:
                     continue
-                raw_default = klass.__dict__.get(fname, MISSING)
-                seen[fname] = _build_field_spec(fname, ann, raw_default)
+                for fname, spec in ancestor_specs.items():
+                    if fname.startswith("_"):
+                        continue
+                    seen[fname] = spec
 
         return seen
 

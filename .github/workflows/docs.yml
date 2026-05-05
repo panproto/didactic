@@ -36,6 +36,8 @@ jobs:
         run: uv sync --all-packages --all-extras
 
       - name: build site (strict)
+        env:
+          NO_MKDOCS_2_WARNING: "1"
         run: uv run mkdocs build --strict --site-dir site
 
       - name: configure pages

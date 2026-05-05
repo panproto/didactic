@@ -22,6 +22,9 @@ specific question of the form "how do I do X with didactic".
   once at construction).
 - [Inheritance](inheritance.md) explains how `class B(A)` produces a
   panproto Theory colimit and how multi-inheritance behaves.
+- [Generic Models](generics.md) covers PEP 695 generic class syntax,
+  the `Generic[T]` mixin, subscript synthesis, default propagation,
+  and substitution through nested generic shapes.
 
 ## Validation
 

@@ -96,6 +96,7 @@ nav:
     - Validators: guide/validators.md
     - Axioms: guide/axioms.md
     - Inheritance: guide/inheritance.md
+    - Generic Models: guide/generics.md
     - Lenses: guide/lenses.md
     - Migrations: guide/migrations.md
     - Schema diff: guide/diff.md

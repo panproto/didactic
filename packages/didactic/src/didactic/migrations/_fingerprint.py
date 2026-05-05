@@ -1,7 +1,3 @@
-# ``structural_spec`` and friends shape ``TheorySpec`` (a TypedDict)
-# back into ``JsonObject`` (``dict[str, JsonValue]``); the dict
-# invariance bites. ``_default`` narrowing on tuple inputs is
-# pyright-flagged as redundant. Tracked in panproto/didactic#1.
 """Stable fingerprints for didactic Theory specs.
 
 didactic stores migration registry entries by a fingerprint that is

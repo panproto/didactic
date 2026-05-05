@@ -146,8 +146,12 @@ uv run pytest
 uv run ruff format
 uv run ruff check
 uv run pyright
-uv run mkdocs build --strict
+NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict
 ```
+
+The `NO_MKDOCS_2_WARNING` env var silences the marketing banner that
+the `mkdocs-material` package prints unconditionally to stderr; CI
+sets it for the same reason.
 
 CI runs lint, pyright, pytest, and the docs build on Linux and macOS
 for every PR.

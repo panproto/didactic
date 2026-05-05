@@ -1,6 +1,3 @@
-# ``annotated_metadata`` lives on ``spec.extras`` as ``Opaque`` and
-# the per-marker iteration takes the marker as an opaque value to
-# duck-type. Tracked in panproto/didactic#1.
 """JSON Schema (Draft 2020-12) generation from a Model class.
 
 The single user-facing entry point is
