@@ -58,6 +58,8 @@ jobs:
         run: uv run pytest -ra
 
       - name: docs build (strict)
+        env:
+          NO_MKDOCS_2_WARNING: "1"
         run: uv run mkdocs build --strict
 
   build:
