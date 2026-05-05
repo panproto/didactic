@@ -179,7 +179,7 @@ wheels = [
 
 [[package]]
 name = "didactic"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/didactic" }
 dependencies = [
     { name = "annotated-types" },
@@ -194,7 +194,7 @@ requires-dist = [
 
 [[package]]
 name = "didactic-fastapi"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/didactic-fastapi" }
 dependencies = [
     { name = "didactic" },
@@ -211,7 +211,7 @@ requires-dist = [
 
 [[package]]
 name = "didactic-pydantic"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/didactic-pydantic" }
 dependencies = [
     { name = "didactic" },
@@ -226,7 +226,7 @@ requires-dist = [
 
 [[package]]
 name = "didactic-settings"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/didactic-settings" }
 dependencies = [
     { name = "didactic" },

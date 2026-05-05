@@ -68,7 +68,7 @@ from didactic.types import _types_lib as types
 from didactic.vcs._backref import ModelPool, resolve_backrefs
 from didactic.vcs._repo import Repository
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 #: Conventional namespace for lens utilities (`dx.lens.identity(...)`,
 #: `dx.lens.Lens`, etc.). The ``lens`` name doubles as a decorator

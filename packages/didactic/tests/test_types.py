@@ -112,6 +112,47 @@ def test_tuple_of_strings() -> None:
     assert t.decode(t.encode(("a", "b"))) == ("a", "b")
 
 
+def test_tuple_encoder_accepts_list() -> None:
+    """``tuple[T, ...]`` encoder coerces list input to tuple.
+
+    Mirrors Pydantic's affordance so call sites migrating across do
+    not have to rewrite every ``[0, 1, 2]`` literal to a tuple.
+    """
+    t = classify(tuple[int, ...])
+    assert t.decode(t.encode(cast("FieldValue", [1, 2, 3]))) == (1, 2, 3)
+
+
+def test_tuple_encoder_rejects_scalar_with_typeerror() -> None:
+    """Non-iterable input raises ``TypeError`` (not ``AssertionError``).
+
+    Bubbling out as ``TypeError`` lets the model's ``__init__`` route
+    the failure into ``ValidationError`` with a field-named entry.
+    """
+    t = classify(tuple[int, ...])
+    with pytest.raises(TypeError, match="expected tuple or list"):
+        t.encode(cast("FieldValue", 42))
+
+
+def test_frozenset_encoder_accepts_list_and_set() -> None:
+    """``frozenset[T]`` encoder coerces list, set, and tuple input."""
+    t = classify(frozenset[int])
+    assert t.decode(t.encode(cast("FieldValue", [3, 1, 2]))) == frozenset([1, 2, 3])
+    assert t.decode(t.encode(cast("FieldValue", {3, 1, 2}))) == frozenset([1, 2, 3])
+    assert t.decode(t.encode(cast("FieldValue", (3, 1, 2)))) == frozenset([1, 2, 3])
+
+
+def test_frozenset_encoder_rejects_string_with_typeerror() -> None:
+    """Strings are iterable but the encoder must not accept them.
+
+    Without the explicit guard ``"abc"`` would be silently exploded
+    into ``frozenset({"a", "b", "c"})``, which is almost never what
+    the caller meant.
+    """
+    t = classify(frozenset[int])
+    with pytest.raises(TypeError, match="expected frozenset"):
+        t.encode(cast("FieldValue", "abc"))
+
+
 def test_frozenset() -> None:
     t = classify(frozenset[int])
     assert t.sort == "Set Int"
