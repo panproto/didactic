@@ -30,11 +30,13 @@ didactic.models._meta : the metaclass that orchestrates field translation.
 # narrows to the wider ``object`` carve-out branch.
 from __future__ import annotations
 
+import enum
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
 from functools import reduce
+from pathlib import PurePath
 from types import EllipsisType, GenericAlias, NoneType, UnionType
 from typing import (
     TYPE_CHECKING,
@@ -313,11 +315,143 @@ _SCALARS: dict[
 
 
 def _is_scalar(typ: TypeForm) -> bool:
-    return isinstance(typ, type) and typ in _SCALARS
+    if not isinstance(typ, type):
+        return False
+    cls = cast("type[object]", typ)
+    if cls in _SCALARS:
+        return True
+    if issubclass(cls, PurePath):
+        return True
+    return _enum_kind(cls) is not None
 
 
 def _scalar_translation(typ: type) -> TypeTranslation:
-    sort, enc, dec, from_json = _SCALARS[typ]
+    cls = cast("type[object]", typ)
+    if cls in _SCALARS:
+        sort, enc, dec, from_json = _SCALARS[cls]
+        return TypeTranslation(
+            sort=sort,
+            encode=enc,
+            decode=dec,
+            inner_kind="scalar",
+            from_json=from_json,
+        )
+    if issubclass(cls, PurePath):
+        return _path_translation(cls)
+    enum_kind = _enum_kind(cls)
+    if enum_kind is not None:
+        return _enum_translation(cls, enum_kind)
+    msg = f"Type {cls!r} is not a registered scalar."
+    raise TypeNotSupportedError(msg)
+
+
+def _path_translation(typ: type) -> TypeTranslation:
+    """Translate ``pathlib.Path`` (and any ``PurePath`` subclass).
+
+    Wire format is ``str(path)``; decoding restores the same subclass.
+    """
+
+    def enc(v: FieldValue) -> Encoded:
+        if not isinstance(v, PurePath):
+            msg = f"expected PurePath for Path field, got {type(v).__name__}"
+            raise TypeError(msg)
+        return str(v)
+
+    def dec(s: Encoded) -> FieldValue:
+        return cast("FieldValue", typ(s))
+
+    def from_json(v: JsonValue) -> FieldValue:
+        if not isinstance(v, str):
+            msg = f"expected JSON string for Path field, got {type(v).__name__}"
+            raise TypeError(msg)
+        return cast("FieldValue", typ(v))
+
+    return TypeTranslation(
+        sort="Path",
+        encode=enc,
+        decode=dec,
+        inner_kind="scalar",
+        from_json=from_json,
+    )
+
+
+def _enum_kind(typ: type) -> Literal["str", "int"] | None:
+    """Classify an Enum subclass as string- or integer-valued.
+
+    Returns ``"str"`` for ``StrEnum`` (or any ``Enum`` whose member
+    values are all ``str``), ``"int"`` for ``IntEnum`` (or any
+    ``Enum`` whose member values are all ``int``), and ``None``
+    otherwise (the enum is rejected at classify time, with a message
+    that points to the supported shapes).
+    """
+    if not issubclass(typ, enum.Enum):
+        return None
+    if issubclass(typ, enum.StrEnum):
+        return "str"
+    if issubclass(typ, enum.IntEnum):
+        return "int"
+    members = list(typ)
+    if not members:
+        return None
+    if all(isinstance(m.value, bool) for m in members):
+        # ``bool`` is a subclass of ``int``; reject so the user
+        # isn't surprised by True/False round-tripping as 1/0.
+        return None
+    if all(isinstance(m.value, str) for m in members):
+        return "str"
+    if all(isinstance(m.value, int) for m in members):
+        return "int"
+    return None
+
+
+def _enum_translation(typ: type, kind: Literal["str", "int"]) -> TypeTranslation:
+    """Translate an ``enum.Enum`` subclass as ``String`` or ``Int``.
+
+    The wire format is the member's ``value`` (a ``str`` for
+    ``StrEnum`` / string-valued enums, an ``int`` for ``IntEnum`` /
+    int-valued enums). Decode reconstructs the member via
+    ``EnumCls(value)``, raising ``ValueError`` if the value isn't a
+    registered member.
+    """
+    sort = "String" if kind == "str" else "Int"
+    enum_cls = cast("type[enum.Enum]", typ)
+
+    def enc(v: FieldValue) -> Encoded:
+        # Accept either an enum member or its raw value (matches
+        # Pydantic; lets ``model_validate({"color": "red"})`` work
+        # without the caller having to wrap in ``EnumCls(...)`` first).
+        member: enum.Enum
+        if isinstance(v, enum_cls):
+            member = v
+        else:
+            try:
+                member = enum_cls(v)
+            except (ValueError, TypeError) as exc:
+                msg = f"value {v!r} is not a member or value of {enum_cls.__name__}"
+                raise TypeError(msg) from exc
+        if kind == "str":
+            return json.dumps(member.value)
+        return json.dumps(int(member.value))
+
+    def dec(s: Encoded) -> FieldValue:
+        raw = json.loads(s)
+        return cast("FieldValue", enum_cls(raw))
+
+    def from_json(v: JsonValue) -> FieldValue:
+        if kind == "str":
+            if not isinstance(v, str):
+                msg = (
+                    f"expected JSON string for {enum_cls.__name__}, "
+                    f"got {type(v).__name__}"
+                )
+                raise TypeError(msg)
+        elif not isinstance(v, int) or isinstance(v, bool):
+            msg = (
+                f"expected JSON integer for {enum_cls.__name__}, got {type(v).__name__}"
+            )
+            raise TypeError(msg)
+        return cast("FieldValue", enum_cls(v))
+
     return TypeTranslation(
         sort=sort,
         encode=enc,
@@ -1096,14 +1230,40 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
     ``cls.__variants__``, and instantiates it via ``model_validate``.
     """
     discriminator = cast("str", cls.__discriminator__)  # type: ignore[attr-defined]
-    variants_by_value: dict[object, type[Model]] = dict(cls.__variants__)  # type: ignore[attr-defined]
     union_name = cls.__name__
-
+    initial_variants = cast(
+        "dict[object, type[Model]]",
+        cls.__variants__,  # type: ignore[attr-defined]
+    )
+    # Snapshot at classify time only for the auxiliary Theory shape;
+    # the runtime encode/decode path reads ``cls.__variants__`` live so
+    # variants registered after this field's classify call (mutually
+    # recursive AST shapes are the canonical case) participate fully.
     aux_sorts, aux_ops = _tagged_union_aux_spec(
-        union_name, discriminator, variants_by_value
+        union_name, discriminator, dict(initial_variants)
     )
 
+    def current_variants() -> dict[object, type[Model]]:
+        live = cast(
+            "dict[object, type[Model]]",
+            cls.__variants__,  # type: ignore[attr-defined]
+        )
+        return dict(live)
+
     def encode_one(value: object) -> JsonValue:
+        variants_by_value = current_variants()
+        # A dict carrying the discriminator is treated as a payload that
+        # would dispatch on ``Root.model_validate``; convert it to the
+        # matching variant instance before the wire dump. Without this,
+        # ``BinOp.model_validate_json`` would hand each nested
+        # ``{"kind": "lit", ...}`` dict straight to this encoder.
+        if isinstance(value, dict) and discriminator in value:
+            payload = cast("dict[str, JsonValue]", value)
+            disc_value = cast("object", payload[discriminator])
+            variant_cls = variants_by_value.get(disc_value)
+            if variant_cls is not None:
+                instance = variant_cls.model_validate_json(json.dumps(payload))
+                return cast("JsonValue", json.loads(instance.model_dump_json()))
         for variant_cls in variants_by_value.values():
             if isinstance(value, variant_cls):
                 # Route through ``model_dump_json`` so any nested
@@ -1111,14 +1271,18 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
                 # nested-Model fields inside the variant get the
                 # JSON-safe walk that ``model_dump`` alone skips.
                 return cast("JsonValue", json.loads(value.model_dump_json()))
-        variant_names = sorted(v.__name__ for v in variants_by_value.values())
+        variant_names = sorted(
+            cast("type", v).__name__ for v in variants_by_value.values()
+        )
+        value_type_name = type(cast("object", value)).__name__
         msg = (
-            f"value of type {type(value).__name__} is not a registered variant "
+            f"value of type {value_type_name} is not a registered variant "
             f"of TaggedUnion {union_name!r}; expected one of {variant_names}."
         )
         raise TypeError(msg)
 
     def decode_one(payload: JsonValue) -> FieldValue:
+        variants_by_value = current_variants()
         if not isinstance(payload, dict):
             msg = (
                 f"TaggedUnion {union_name!r} payload must be a dict; got "

@@ -26,11 +26,13 @@ didactic.models._storage : the pluggable storage backend.
 # pipeline; the per-call ``cast("FieldValue", value)`` covers this.
 from __future__ import annotations
 
+import enum
 import inspect
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
+from pathlib import PurePath
 from types import UnionType
 from typing import (
     TYPE_CHECKING,
@@ -1005,6 +1007,10 @@ def _to_json_safe(value: FieldValue | JsonValue) -> JsonValue:
         return str(value)
     if isinstance(value, bytes):
         return value.hex()
+    if isinstance(value, PurePath):
+        return str(value)
+    if isinstance(value, enum.Enum):
+        return cast("JsonValue", value.value)
     if isinstance(value, Model):
         # embedded sub-model; recurse into its model_dump shape
         return _to_json_safe(value.model_dump())

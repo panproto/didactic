@@ -26,12 +26,45 @@ Mutable containers (`list`, `set`, plain `dict`) are rejected. Use
 | `datetime.timedelta` | seconds | `timedelta` |
 | `decimal.Decimal` | numeric string | `Decimal` |
 | `uuid.UUID` | canonical | `UUID` |
-| `pathlib.Path` | string | `Path` |
-| `enum.Enum` | member name | `Enum` |
+| `pathlib.Path` (and any `PurePath` subclass) | string | the same `PurePath` subclass |
+| `enum.StrEnum` | string (the member value) | `StrEnum` member |
+| `enum.IntEnum` | integer (the member value) | `IntEnum` member |
+| `enum.Enum` (string- or int-valued) | the member value | `Enum` member |
 
 The encoded form is what panproto stores. JSON output uses the same
 encoded form, with one extra step that turns hex `bytes` into a
 JSON string and `frozenset` into a sorted list.
+
+## Paths and enums
+
+`pathlib.Path` and any `PurePath` subclass round-trip as strings:
+
+```python
+from pathlib import Path
+
+class Cfg(dx.Model):
+    data_dir: Path
+```
+
+`enum.StrEnum` round-trips as a string (the member value);
+`enum.IntEnum` round-trips as an integer. Plain `enum.Enum` works
+when every member's value is a string or every member's value is an
+integer; mixed-value enums raise `TypeNotSupportedError`.
+
+```python
+from enum import StrEnum
+
+class Color(StrEnum):
+    RED = "red"
+    BLUE = "blue"
+
+class Item(dx.Model):
+    color: Color
+```
+
+Construction accepts either an enum member or its raw value, so
+`Item.model_validate({"color": "red"})` works the same as
+`Item(color=Color.RED)`.
 
 ## Optional types
 

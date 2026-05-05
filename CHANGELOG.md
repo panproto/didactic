@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-05
+
+### Added
+
+- ``pathlib.Path`` (and any ``PurePath`` subclass: ``PurePosixPath``,
+  ``PureWindowsPath``, etc.) is a first-class scalar field type. Wire
+  format is ``str(path)``; decoding restores the same ``PurePath``
+  subclass. ([#21])
+- ``enum.StrEnum`` and ``enum.IntEnum`` are first-class scalar field
+  types. String-valued and int-valued plain ``enum.Enum`` subclasses
+  also work; mixed-value enums raise ``TypeNotSupportedError``. The
+  encoder accepts either an enum member or its raw value, so
+  ``M.model_validate({"color": "red"})`` works the same as
+  ``M(color=Color.RED)``. ([#23])
+
+### Fixed
+
+- TaggedUnion-typed fields now JSON-round-trip correctly when the
+  variant is itself a TaggedUnion. ``model_validate_json`` walks
+  each nested ``{"kind": "...", ...}`` payload through the
+  discriminator registry, instead of handing the dict straight to
+  the variant-encoder (which expected a fully-constructed instance).
+  Direct construction with a dict child works too:
+  ``BinOp(left={"kind": "lit", "value": 1}, ...)`` dispatches the
+  same way. ([#22])
+- TaggedUnion-typed fields consult ``cls.__variants__`` *live* at
+  encode and decode time, not snapshotted at field-classify time.
+  Variants registered after a parent variant's field was classified
+  (the canonical case is mutually recursive AST shapes:
+  ``BinaryOp`` -> ``ListLiteral`` and ``ListLiteral`` -> ``BinaryOp``)
+  participate fully, in either definition order. ([#24])
+
+### Changed
+
+- ``docs/guide/types.md`` documents the Path family and the
+  StrEnum / IntEnum / value-typed Enum branches alongside a
+  worked ``StrEnum`` example.
+- ``docs/guide/unions.md`` documents recursive and mutually
+  recursive variants, dict-dispatch on construction, and the JSON
+  round-trip contract.
+
+[#21]: https://github.com/panproto/didactic/issues/21
+[#22]: https://github.com/panproto/didactic/issues/22
+[#23]: https://github.com/panproto/didactic/issues/23
+[#24]: https://github.com/panproto/didactic/issues/24
+
 ## [0.4.3] - 2026-05-05
 
 ### Fixed
