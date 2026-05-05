@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-05
+
+### Fixed
+
+- ``__axioms__`` can now reference Optional fields. The previous
+  evaluator only handled bare comparison and arithmetic; ``a == null``
+  parsed but failed at evaluation, and ``a != null`` failed even at
+  parse time. The expression-language pipeline now does two things:
+  a Python-friendly preprocessor rewrites ``!=`` -> ``/=``,
+  ``and``/``or`` -> ``&&``/``||``, ``null``/``None`` -> ``Nothing``,
+  and ``X is null`` / ``X is not null`` -> the corresponding
+  ``Nothing`` comparison; the evaluator handles the full panproto
+  Expr surface (``Just``/``Nothing``, ``App``-style builtins
+  including ``min``/``max``/``abs``/``elem``/``len``,
+  ``if/then/else`` (``Match``), ``let`` bindings, lambdas in
+  ``map``/``filter``, list literals ``[1, 2, 3]``, field access
+  ``a.b``, and the ``++`` (``Concat``) operator). The preprocessor
+  respects string literals: substitutions never fire inside ``"..."``
+  or ``'...'``. ([#26])
+
+### Changed
+
+- ``docs/guide/axioms.md`` documents the full surface (operators,
+  Python-friendly synonyms, an Optional-field worked example) and
+  narrows the "what axioms cannot do" section to the truly missing
+  constructs (``forall``/``exists``, multi-arm ``case``,
+  graph-traversal builtins).
+
+[#26]: https://github.com/panproto/didactic/issues/26
+
 ## [0.5.0] - 2026-05-05
 
 ### Added
