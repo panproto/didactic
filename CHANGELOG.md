@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-05
+
+### Fixed
+
+- ``@dx.validates`` is no longer a silent no-op. The metaclass now
+  walks ``target.__mro__`` for methods carrying the
+  ``__didactic_validator__`` marker and stores them on the class as
+  ``__field_validators__``; ``Model.__init__`` and ``Model.with_(...)``
+  invoke them in the right order: ``dx.field(converter=...)`` first,
+  then ``mode="before"`` validators on the raw value, then the
+  encoder, then ``mode="after"`` validators on the canonical decoded
+  value (re-encoded if the validator returned a different value).
+  Validators may ``raise ValueError`` / ``raise TypeError`` to reject
+  the input; failures surface as ``ValidationError`` entries with
+  ``type="validator_error"`` and ``loc=(field_name,)``. Instance,
+  ``@classmethod``, and ``@staticmethod`` shapes all work. Subclasses
+  inherit a parent's validators; a subclass override that re-applies
+  ``@validates`` replaces the inherited method, and a subclass that
+  shadows the method without ``@validates`` deliberately disables
+  validation for that field. ([#17])
+
+### Changed
+
+- ``docs/guide/validators.md`` was rewritten to document the
+  ``raise ValueError`` / return-value-replaces-stored-value contract
+  (the previous draft described a ``return bool`` shape that the
+  runtime never implemented), and to cover ``mode="before"``,
+  multi-field validators, multiple-validator chaining, inheritance
+  semantics, and the three method shapes.
+
+[#17]: https://github.com/panproto/didactic/issues/17
+
 ## [0.4.1] - 2026-05-05
 
 ### Fixed

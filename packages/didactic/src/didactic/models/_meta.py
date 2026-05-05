@@ -348,6 +348,7 @@ class ModelMeta(type):
     __model_config__: ModelConfig
     __computed_fields__: tuple[str, ...]
     __class_axioms__: tuple[Axiom, ...]
+    __field_validators__: dict[str, tuple[tuple[str, str], ...]]
     __theory_cache__: panproto.Theory | None
 
     @property
@@ -397,6 +398,7 @@ class ModelMeta(type):
             cls.__model_config__ = DEFAULT_CONFIG
             cls.__computed_fields__ = ()
             cls.__class_axioms__ = ()
+            cls.__field_validators__ = {}
             return cls
 
         cls.__schema_kind__ = name
@@ -404,6 +406,7 @@ class ModelMeta(type):
         cls.__field_specs__ = ModelMeta.collect_field_specs(cls)
         cls.__computed_fields__ = computed_field_names(cls)
         cls.__class_axioms__ = collect_class_axioms(cls)
+        cls.__field_validators__ = ModelMeta.collect_field_validators(cls)
         # placeholder for the cached panproto.Theory; populated lazily
         # by the `__theory__` property the metaclass exposes below.
         cls.__theory_cache__ = None
@@ -540,6 +543,65 @@ class ModelMeta(type):
                     seen[fname] = spec
 
         return seen
+
+    @staticmethod
+    def collect_field_validators(
+        target: type,
+    ) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Walk MRO and collect ``@validates``-tagged methods.
+
+        Parameters
+        ----------
+        target
+            The class to inspect.
+
+        Returns
+        -------
+        dict
+            Mapping ``field_name -> tuple of (method_name, mode)`` in
+            registration order. Methods are stored by name (not bound
+            callable) so that subclasses overriding a validator method
+            transparently take effect: ``getattr(cls, method_name)`` at
+            call time picks up the override via normal MRO.
+
+        Notes
+        -----
+        Walks ``target.__mro__`` in reverse so subclass declarations
+        override ancestor declarations. A subclass method that shadows
+        an ancestor validator *without* re-applying ``@validates``
+        unregisters that method's marker; the override is taken at face
+        value.
+        """
+        # method_name -> marker dict, populated in reverse-MRO order so
+        # the subclass entry wins. Subclass methods that shadow without
+        # the marker remove the ancestor entry.
+        markers: dict[str, dict[str, Opaque]] = {}
+        for klass in reversed(target.__mro__):
+            if not isinstance(klass, ModelMeta):
+                continue
+            for member_name, member in vars(klass).items():
+                if member_name.startswith("__"):
+                    continue
+                marker = getattr(member, "__didactic_validator__", None)
+                if marker is None:
+                    func = getattr(member, "__func__", None)
+                    if func is not None:
+                        marker = getattr(func, "__didactic_validator__", None)
+                if marker is not None:
+                    markers[member_name] = cast("dict[str, Opaque]", marker)
+                elif callable(member) and member_name in markers:
+                    # subclass shadows the ancestor validator without
+                    # re-tagging; honour the override and drop the marker
+                    del markers[member_name]
+
+        # invert to per-field tuples, preserving registration order
+        per_field: dict[str, list[tuple[str, str]]] = {}
+        for member_name, marker in markers.items():
+            field_names = cast("tuple[str, ...]", marker["fields"])
+            mode = cast("str", marker["mode"])
+            for fname in field_names:
+                per_field.setdefault(fname, []).append((member_name, mode))
+        return {fname: tuple(items) for fname, items in per_field.items()}
 
 
 __all__ = [

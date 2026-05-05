@@ -22,10 +22,13 @@ didactic.models._storage : the pluggable storage backend.
 """
 
 # ``__init__(**kwargs: FieldValue | JsonValue)`` accepts JSON-shape
-# dicts but pyright doesn't carry the union through ``_encode_field``.
+# dicts but pyright doesn't carry the union through the field
+# pipeline; the per-call ``cast("FieldValue", value)`` covers this.
 from __future__ import annotations
 
+import inspect
 import json
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from types import UnionType
@@ -51,7 +54,7 @@ from didactic.models._meta import ModelMeta, read_class_annotations
 from didactic.models._storage import DictStorage
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from didactic.axioms._axioms import Axiom
     from didactic.codegen._json_schema import JsonSchemaDoc
@@ -180,7 +183,18 @@ class Model(metaclass=ModelMeta):
                 value = default
 
             try:
-                encoded_value = _encode_field(spec, cast("FieldValue", value))
+                encoded_value = _run_field_pipeline(
+                    cls, spec, fname, cast("FieldValue", value)
+                )
+            except _ValidatorError as fail:
+                errors.append(
+                    ValidationErrorEntry(
+                        loc=(fname,),
+                        type="validator_error",
+                        msg=fail.message,
+                    )
+                )
+                continue
             except (TypeError, ValueError) as exc:
                 errors.append(
                     ValidationErrorEntry(
@@ -319,7 +333,13 @@ class Model(metaclass=ModelMeta):
                 )
                 continue
             try:
-                encoded[k] = _encode_field(specs[k], v)
+                encoded[k] = _run_field_pipeline(cls, specs[k], k, v)
+            except _ValidatorError as fail:
+                errors.append(
+                    ValidationErrorEntry(
+                        loc=(k,), type="validator_error", msg=fail.message
+                    )
+                )
             except (TypeError, ValueError) as exc:
                 errors.append(
                     ValidationErrorEntry(loc=(k,), type="type_error", msg=str(exc))
@@ -1031,15 +1051,56 @@ def _from_json_payload(
     return out
 
 
-def _encode_field(spec: FieldSpec, value: FieldValue) -> Encoded:
-    """Run the converter (if any) and the type-translation encoder.
+@dataclass(frozen=True, slots=True)
+class _ValidatorError(Exception):
+    """Internal error type carrying a ``@validates``-raised message.
+
+    Wraps the ``ValueError`` / ``TypeError`` raised by a user
+    validator so the ``__init__`` and ``with_()`` paths can route the
+    failure to a ``"validator_error"`` ``ValidationErrorEntry``
+    instead of conflating it with the encoder's ``"type_error"``.
+    """
+
+    message: str
+
+
+def _invoke_validator(cls: type, method_name: str, value: FieldValue) -> FieldValue:
+    """Invoke a ``@validates``-tagged method with class-level binding.
+
+    Both ``@classmethod`` and plain instance methods are supported.
+    Instance methods receive the class as their first argument (the
+    Model is frozen and not yet constructed when validators run, so
+    no instance ``self`` exists). ``@staticmethod`` validators are
+    called with the value alone.
+    """
+    descriptor = inspect.getattr_static(cls, method_name)
+    if isinstance(descriptor, staticmethod):
+        sm = cast("staticmethod[..., FieldValue]", descriptor)
+        return sm.__func__(value)
+    if isinstance(descriptor, classmethod):
+        cm = cast("classmethod[type, ..., FieldValue]", descriptor)
+        return cm.__func__(cls, value)
+    return cast("Callable[..., FieldValue]", descriptor)(cls, value)
+
+
+def _run_field_pipeline(
+    cls: type,
+    spec: FieldSpec,
+    fname: str,
+    value: FieldValue,
+) -> Encoded:
+    """Run converter, before-validators, encoder, after-validators.
 
     Parameters
     ----------
+    cls
+        The Model class (used to look up validators and bind them).
     spec
         The field's spec.
+    fname
+        Field name; used to find registered validators.
     value
-        The user-supplied value.
+        The raw user-supplied value (or the resolved default).
 
     Returns
     -------
@@ -1048,12 +1109,49 @@ def _encode_field(spec: FieldSpec, value: FieldValue) -> Encoded:
 
     Raises
     ------
+    _ValidatorError
+        A ``@validates`` callback raised ``ValueError`` or ``TypeError``.
     TypeError or ValueError
-        If the value cannot be encoded.
+        The encoder rejected the value (mismatched type, failed
+        ``Annotated[...]`` constraint, etc.).
     """
     if spec.converter is not None:
         value = spec.converter(value)
-    return spec.translation.encode(value)
+
+    validators: tuple[tuple[str, str], ...] = cast(
+        "ModelMeta", cls
+    ).__field_validators__.get(fname, ())
+
+    for method_name, mode in validators:
+        if mode != "before":
+            continue
+        try:
+            value = _invoke_validator(cls, method_name, value)
+        except (ValueError, TypeError) as exc:
+            raise _ValidatorError(str(exc)) from exc
+
+    encoded_value = spec.translation.encode(value)
+
+    if not any(mode == "after" for _, mode in validators):
+        return encoded_value
+
+    # ``after`` validators see the canonical decoded form, mirroring
+    # Pydantic's behaviour where the post-coercion value is what the
+    # validator inspects. Re-encode if any validator returned a
+    # different value.
+    typed: FieldValue = spec.translation.decode(encoded_value)
+    new_value = typed
+    for method_name, mode in validators:
+        if mode != "after":
+            continue
+        try:
+            new_value = _invoke_validator(cls, method_name, new_value)
+        except (ValueError, TypeError) as exc:
+            raise _ValidatorError(str(exc)) from exc
+
+    if new_value is typed:
+        return encoded_value
+    return spec.translation.encode(new_value)
 
 
 # alias for adoption ergonomics

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "didactic-fastapi"
-version = "0.4.1"
+version = "0.4.2"
 description = "FastAPI integration for didactic Models."
 readme = "README.md"
 requires-python = ">=3.14"
