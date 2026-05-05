@@ -1,10 +1,3 @@
-# The metaclass passes resolved annotations (``type | TypeVar |
-# ForwardRef``) into ``classify`` and ``_build_field_spec``, which
-# expect the narrower ``TypeForm`` (``type | UnionType``). The
-# runtime contract handles the wider input (the metaclass also
-# accepts string forward refs and TypeVar instances), but pyright
-# can't follow the case split through the dataclass_transform
-# layer. Tracked in panproto/didactic#1.
 """The ``ModelMeta`` metaclass: class-as-Theory derivation.
 
 ``ModelMeta`` runs at class-creation time. It reads each annotated field,
@@ -101,7 +94,7 @@ def _deferred_from_json(_: JsonValue) -> FieldValue:
     raise TypeError(msg)
 
 
-def _read_class_annotations(cls: type) -> dict[str, type | ForwardRef]:
+def read_class_annotations(cls: type) -> dict[str, type | TypeVar | ForwardRef]:
     """Read a class's annotations through ``annotationlib``, robustly.
 
     Parameters
@@ -147,7 +140,7 @@ def _read_class_annotations(cls: type) -> dict[str, type | ForwardRef]:
     localns: dict[str, Opaque] = dict(vars(cls))
     localns.setdefault(cls.__name__, cls)
 
-    resolved: dict[str, type | ForwardRef] = {}
+    resolved: dict[str, type | TypeVar | ForwardRef] = {}
     for name, ann in raw.items():
         if isinstance(ann, str):
             try:
@@ -464,17 +457,34 @@ class ModelMeta(type):
         """
         seen: dict[str, FieldSpec] = {}
 
-        # walk MRO in reverse so derived classes overwrite base entries
+        # walk MRO in reverse so derived classes overwrite base entries.
+        # For ancestor classes the FieldSpec is already finalised
+        # (defaults captured during their own construction); copy the
+        # spec verbatim. For ``target`` itself we re-run
+        # ``_build_field_spec`` because the raw default still lives on
+        # the class dict and hasn't been replaced by the descriptor yet.
+        # Reading ``__dict__`` for ancestor classes would lose their
+        # defaults, since a Model's class-attribute defaults are
+        # consumed at class-creation time and no longer present in
+        # ``__dict__`` afterwards.
         for klass in reversed(target.__mro__):
             if not isinstance(klass, ModelMeta):
                 continue
-            anns = _read_class_annotations(klass)
-            for fname, ann in anns.items():
-                # skip private / dunder attributes
-                if fname.startswith("_"):
+            if klass is target:
+                anns = read_class_annotations(klass)
+                for fname, ann in anns.items():
+                    if fname.startswith("_"):
+                        continue
+                    raw_default = klass.__dict__.get(fname, MISSING)
+                    seen[fname] = _build_field_spec(fname, ann, raw_default)
+            else:
+                ancestor_specs = getattr(klass, "__field_specs__", None)
+                if ancestor_specs is None:
                     continue
-                raw_default = klass.__dict__.get(fname, MISSING)
-                seen[fname] = _build_field_spec(fname, ann, raw_default)
+                for fname, spec in ancestor_specs.items():
+                    if fname.startswith("_"):
+                        continue
+                    seen[fname] = spec
 
         return seen
 

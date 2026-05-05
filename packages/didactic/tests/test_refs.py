@@ -1,8 +1,5 @@
 """Tests for ``dx.Ref[T]`` cross-vertex references."""
 
-# Tests pass intentional wrong-type ``Ref`` arguments and exercise
-# private-API access on the marker layer to verify error paths.
-# Tracked in panproto/didactic#1; will be replaced with structural
 # Protocols in a v0.1.x patch.
 
 from typing import cast, get_args, get_origin

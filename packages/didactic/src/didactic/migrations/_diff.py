@@ -1,6 +1,3 @@
-# ``diff_and_classify`` returns a ``CompatReport`` whose ``.to_dict()``
-# we re-emit as ``JsonObject``; pyright's stub doesn't narrow the
-# panproto-side types tightly enough. Tracked in panproto/didactic#1.
 """Schema diff and breaking-change detection.
 
 Two thin functions over panproto's ``diff_schemas`` and

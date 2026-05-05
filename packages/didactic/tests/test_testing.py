@@ -1,10 +1,5 @@
 """Tests for the dx.testing helpers (verify_iso, check_lens_laws)."""
 
-# Tests define small Lens/Iso subclasses that override ``forward`` /
-# ``backward`` with parameter names matching the test's domain
-# (e.g., ``user``, ``email``) rather than the base class's ``a``
-# / ``b``. Tracked in panproto/didactic#1.
-
 import pytest
 from hypothesis import strategies as st
 

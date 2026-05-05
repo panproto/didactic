@@ -1,9 +1,5 @@
 """Tests for Pydantic-parity additions: model_dump options, RootModel, TypeAdapter."""
 
-# Test calls a Model with the field name when the test's Model
-# declares an alias; pyright reads the alias as the parameter name
-# while the runtime accepts both. Tracked in panproto/didactic#1.
-
 from __future__ import annotations
 
 import didactic.api as dx

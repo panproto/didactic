@@ -7,10 +7,6 @@ so we exercise the modern PEP 649 path through the metaclass. A separate
 test module (``test_model_legacy.py``) exercises the future-import path.
 """
 
-# Tests use ``Model.__class__(name, bases, namespace)`` to dynamically
-# construct Model subclasses; pyright can't follow the metaclass
-# invocation. Tracked in panproto/didactic#1.
-
 from typing import Annotated
 
 import pytest

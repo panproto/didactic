@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-05
+
+### Added
+
+- ``ModelConfig.extra="ignore"`` is honoured: keyword arguments at
+  construction (and dict keys at ``model_validate``) that don't match
+  a declared field are silently dropped. ``with_()`` remains strict;
+  an unknown kwarg there is always a programming error. ([#11])
+- Generic Models auto-parameterise on subscript. ``class Range(dx.Model,
+  Generic[T]): min: T; max: T`` followed by ``Range[int](min=0, max=10)``
+  returns an instance of a synthesised concrete subclass. The
+  synthesised class is cached per type-arg tuple, so repeated
+  subscripts return the same class object and its ``Theory`` is built
+  once. Only bare ``TypeVar`` annotations are substituted; nested
+  shapes (``items: tuple[T, ...]``) stay unsubstituted and raise the
+  existing ``TypeVar``-encode error. ([#12])
+- ``read_class_annotations`` is now part of the public surface
+  (lifted from the underscore-prefixed ``_read_class_annotations``)
+  and the metaclass's annotation-reader return type widens to
+  ``dict[str, type | TypeVar | ForwardRef]`` to reflect what the
+  PEP 695 generic-parameter path actually produces.
+
+### Fixed
+
+- Inherited field defaults are no longer dropped on subclass.
+  ``Child(Base)`` where ``Base`` declares ``id: str = "default-id"``
+  inherits the default. ``ModelMeta.collect_field_specs`` previously
+  re-read every annotation from ``klass.__dict__`` while walking the
+  MRO, but defaults are stripped from ``__dict__`` during the parent's
+  own class creation; the MRO walk now copies the parent's
+  already-finalised ``FieldSpec`` for inherited fields and only
+  re-builds specs for the target class's own annotations. ([#13])
+
+### Removed
+
+- The leftover ``# Tracked in panproto/didactic#1.`` comment blocks
+  from ``didactic#1``'s suppression unwind are stripped. The blocks
+  documented suppressions that no longer exist; they were not
+  flagged in CI but accumulated as documentation rot.
+
+[#11]: https://github.com/panproto/didactic/issues/11
+[#12]: https://github.com/panproto/didactic/issues/12
+[#13]: https://github.com/panproto/didactic/issues/13
+
 ## [0.3.2] - 2026-05-04
 
 ### Changed

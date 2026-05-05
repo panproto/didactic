@@ -1,9 +1,5 @@
 """Tests for ``dx.TaggedUnion`` discriminated unions."""
 
-# Test classes inside test functions are registered via the
-# ``TaggedUnion`` metaclass side effect; the local name is "unused"
-# from a pyright POV. Tracked in panproto/didactic#1.
-
 from typing import Literal
 
 import pytest

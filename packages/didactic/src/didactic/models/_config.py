@@ -46,8 +46,13 @@ class ModelConfig:
     ----------
     extra
         How to handle keyword arguments that don't match a declared
-        field. Only ``"forbid"`` is honoured currently; ``"ignore"`` and
-        ``"allow"`` raise ``NotImplementedError``.
+        field. ``"forbid"`` (default) raises ``ValidationError`` on
+        any unknown key; ``"ignore"`` silently drops unknown keys at
+        construction (the dropped values never enter the model and
+        never appear in ``model_dump()``). ``"allow"`` raises
+        ``NotImplementedError`` (it needs a storage decision for
+        unknown fields that the immutable Model contract doesn't
+        cleanly support yet).
     strict
         If ``True``, type coercion is disabled; every field's value
         must already be the declared type. Default ``True``. ``False``
@@ -75,11 +80,16 @@ class ModelConfig:
                 f"got {self.extra!r}"
             )
             raise ValueError(msg)
-        # v0.0.1 only honours `forbid`; fail loud on the unsupported settings
-        if self.extra != "forbid":
+        # ``"forbid"`` and ``"ignore"`` are honoured at construction
+        # (in ``Model.__init__``). ``"allow"`` is reserved: storing
+        # unknown values where ``model_dump`` can find them while
+        # keeping the model frozen has no settled design.
+        if self.extra == "allow":
             msg = (
-                f"ModelConfig.extra={self.extra!r} is not yet implemented; "
-                "only 'forbid' is honoured."
+                "ModelConfig.extra='allow' is not yet implemented; the "
+                "frozen-Model contract has no settled storage path for "
+                "unknown fields. Use 'ignore' to drop them silently or "
+                "'forbid' to reject them."
             )
             raise NotImplementedError(msg)
         if not self.strict:

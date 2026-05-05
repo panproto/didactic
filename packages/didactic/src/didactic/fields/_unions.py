@@ -1,7 +1,3 @@
-# ``TaggedUnion.model_validate`` overrides the base class with a
-# narrower payload type; the runtime accepts the base shape too. The
-# ``Literal[...]`` discriminator extraction goes through annotation
-# walking that pyright can't follow. Tracked in panproto/didactic#1.
 """Tagged (discriminated) unions over [Model][didactic.api.Model] subclasses.
 
 Pydantic-shaped discriminated unions: declare a base class with a
