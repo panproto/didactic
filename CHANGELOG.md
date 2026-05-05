@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-05
+
+### Fixed
+
+- ``Embed[Root]`` where ``Root`` is a ``TaggedUnion`` no longer
+  downcasts variant instances to the root class. The Embed encoder
+  always wrote the variant's full storage dict (including the
+  variant-specific fields), but the decoder reconstructed the value
+  via ``Root.from_storage_dict`` -- the root has no field specs of
+  its own, so the variant fields became unreachable on the recovered
+  instance. The Embed translation now inspects the stored
+  discriminator value at decode time and dispatches to the matching
+  variant in ``Root.__variants__``, mirroring the live-registry fix
+  used elsewhere in the TaggedUnion path. ``tuple[Embed[Root], ...]``,
+  ``dict[str, Embed[Root]]``, and bare ``Embed[Root]`` fields all
+  preserve the variant subclass identity through construction,
+  storage round-trip, and JSON round-trip. Plain ``Embed[T]`` (no
+  TaggedUnion) keeps the legacy single-class path unchanged. ([#27])
+
+[#27]: https://github.com/panproto/didactic/issues/27
+
 ## [0.5.1] - 2026-05-05
 
 ### Fixed

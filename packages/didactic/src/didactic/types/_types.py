@@ -1919,6 +1919,13 @@ def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTran
     by reconstructing a ``T`` via its private ``from_storage_dict`` hook
     (no validation re-runs because the storage is already in encoded form).
 
+    When ``T`` is a [didactic.api.TaggedUnion][didactic.api.TaggedUnion] root,
+    the encoder preserves the variant subclass identity (the input is a
+    variant instance with its own field set), and the decoder dispatches
+    on the stored discriminator value to reconstruct the same variant
+    subclass instead of the bare root. Without this, every variant's
+    extra fields would be invisible after a round-trip through Embed.
+
     Parameters
     ----------
     base
@@ -1935,6 +1942,7 @@ def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTran
     must be resolved by classification time.
     """
     from didactic.fields._refs import EmbedSentinel  # noqa: PLC0415
+    from didactic.fields._unions import TaggedUnion  # noqa: PLC0415
     from didactic.models._model import Model  # noqa: PLC0415
 
     assert any(isinstance(m, EmbedSentinel) for m in metadata)
@@ -1947,12 +1955,46 @@ def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTran
 
     target_cls: type[Model] = base
     target_name = target_cls.__name__
+    is_union_root = (
+        issubclass(target_cls, TaggedUnion)
+        and target_cls is not TaggedUnion
+        and getattr(target_cls, "__discriminator__", None) is not None
+    )
+    discriminator: str | None = (
+        cast("str", target_cls.__discriminator__)  # type: ignore[attr-defined]
+        if is_union_root
+        else None
+    )
+
+    def _resolve_variant(items: dict[str, JsonValue]) -> type[Model]:
+        """Pick the variant subclass for a stored Embed[Root] payload.
+
+        The discriminator field is a ``Literal[...]`` of string values
+        (the only shape ``TaggedUnion`` accepts), and the panproto
+        String encoder is the identity, so the stored discriminator
+        value sits in ``items`` as the raw string. Look it up in the
+        live variant registry; fall back to ``target_cls`` if the
+        discriminator key is absent (the legacy single-class Embed
+        path) or holds an unregistered value (a stale storage from a
+        schema older than the current variant registry).
+        """
+        if not is_union_root or discriminator is None:
+            return target_cls
+        disc_value = items.get(discriminator)
+        if disc_value is None:
+            return target_cls
+        variants = cast(
+            "dict[object, type[Model]]",
+            target_cls.__variants__,  # type: ignore[attr-defined]
+        )
+        return variants.get(disc_value, target_cls)
 
     def encode(v: FieldValue) -> Encoded:
-        # accept either a target_cls instance or a dict. The dict path
-        # goes through ``model_validate_json`` (not ``model_validate``)
-        # so each per-field ``from_json`` runs and JSON-shape values
-        # like ``[1, 2, 3]`` for a ``tuple[int, ...]`` field get the
+        # accept either a target_cls instance (or, for TaggedUnion roots,
+        # any registered variant instance) or a dict. The dict path goes
+        # through ``model_validate_json`` (not ``model_validate``) so each
+        # per-field ``from_json`` runs and JSON-shape values like
+        # ``[1, 2, 3]`` for a ``tuple[int, ...]`` field get the
         # list-to-tuple coercion before the field encoder asserts.
         if isinstance(v, target_cls):
             return json.dumps(v.to_storage_dict())
@@ -1974,7 +2016,9 @@ def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTran
                 f"got {type(items).__name__}"
             )
             raise TypeError(msg)
-        return target_cls.from_storage_dict(cast("dict[str, str]", items))
+        items_dict = cast("dict[str, JsonValue]", items)
+        variant_cls = _resolve_variant(items_dict)
+        return variant_cls.from_storage_dict(cast("dict[str, str]", items_dict))
 
     def from_json(v: JsonValue) -> FieldValue:
         # the JSON form is the model_dump dict (decoded values), not
