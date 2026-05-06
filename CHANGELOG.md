@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-06
+
+### Fixed
+
+- ``FieldValue``'s recursive mapping arm uses ``Mapping[str, FieldValue]``
+  (covariant in its value type) instead of the invariant
+  ``dict[str, FieldValue]``. ``dict`` is invariant in ``V``, so any
+  concrete ``dict[str, X]`` (where ``X`` is a structural subset of
+  ``FieldValue``) was rejected by type checkers at every
+  ``Model.with_(field=value)`` call site, forcing callers to insert
+  ``cast("dict[str, FieldValue]", ...)`` boilerplate. The runtime
+  contract is unchanged: every ``dict`` is also a ``Mapping``, and
+  the encoder pipeline's ``isinstance(v, dict)`` checks keep matching
+  real ``dict`` payloads. ([#36])
+
+[#36]: https://github.com/panproto/didactic/issues/36
+
 ## [0.6.1] - 2026-05-06
 
 ### Fixed

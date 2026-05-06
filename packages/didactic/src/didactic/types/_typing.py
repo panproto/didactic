@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, ForwardRef, Protocol, runtime_checkable
 from uuid import UUID
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from didactic.fields._fields import MissingType
     from didactic.models._model import Model
 
@@ -72,6 +74,16 @@ type JsonObject = dict[str, JsonValue]
 
 #: Any value a [Model][didactic.api.Model] field can hold. Recursive: the
 #: container variants nest. ``"Model"`` covers ``Embed[T]`` field values.
+#:
+#: The mapping arm uses ``Mapping`` (covariant in its value type) rather
+#: than the invariant ``dict``. ``dict`` is invariant in ``V``, so without
+#: the looser bound a concrete ``dict[str, MetadataValue]`` (or any other
+#: ``dict[str, X]`` whose ``X`` is a structural subset of ``FieldValue``)
+#: would not be assignable to a ``FieldValue``-typed parameter -- forcing
+#: callers to cast through every ``with_(metadata=...)`` call site. The
+#: runtime contract is unchanged: every ``dict`` is also a ``Mapping``,
+#: and every ``isinstance(v, dict)`` check (in the encoder pipeline) keeps
+#: matching real ``dict`` payloads.
 type FieldValue = (
     str
     | int
@@ -86,7 +98,7 @@ type FieldValue = (
     | None
     | tuple[FieldValue, ...]
     | frozenset[FieldValue]
-    | dict[str, FieldValue]
+    | Mapping[str, FieldValue]
     | Model
 )
 
