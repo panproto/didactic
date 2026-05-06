@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-06
+
+### Fixed
+
+- ``ModelMeta``'s ``@dataclass_transform`` now declares
+  ``kw_only_default=True`` (it previously declared
+  ``kw_only_default=False``). Without this, type checkers in strict
+  mode rejected every subclass that added a non-default field after
+  a parent's default-bearing field with
+  ``"Fields without default values cannot appear after fields with
+  default values"`` (``reportGeneralTypeIssues``). The runtime
+  ``Model.__init__`` already accepted only keyword arguments, so the
+  flag flip just aligns the static contract with the runtime
+  behaviour. The natural shape (``Base`` carries auto-id /
+  timestamps with defaults; ``Subclass`` adds domain fields) now
+  passes pyright's strict-mode analysis without per-line
+  suppressions. ([#34])
+
+[#34]: https://github.com/panproto/didactic/issues/34
+
 ## [0.6.0] - 2026-05-06
 
 ### Added

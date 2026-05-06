@@ -15,8 +15,14 @@ Notes
 The metaclass uses the ``@dataclass_transform`` decorator (PEP 681) to
 tell type checkers that derived classes synthesise an ``__init__``
 accepting each annotated field. Flags applied:
-``eq_default=True``, ``order_default=False``, ``kw_only_default=False``,
-``frozen_default=True``, ``field_specifiers=(Field, field)``.
+``eq_default=True``, ``order_default=False``, ``kw_only_default=True``,
+``frozen_default=True``, ``field_specifiers=(Field, field)``. The
+``kw_only_default=True`` flag matches the runtime ``Model.__init__``,
+which only accepts keyword arguments (no positional construction);
+without it, type checkers reject any subclass that adds a
+non-default field after a parent's default-bearing field, which
+is the natural shape for a base-with-id-and-timestamps and
+domain-specific subclasses.
 """
 
 from __future__ import annotations
@@ -319,7 +325,7 @@ def _build_field_spec(
 @dataclass_transform(
     eq_default=True,
     order_default=False,
-    kw_only_default=False,
+    kw_only_default=True,
     frozen_default=True,
     field_specifiers=(Field, field),
 )
