@@ -160,8 +160,72 @@ def validates(
     return decorator
 
 
+def model_validator(
+    *, mode: str = "after"
+) -> Callable[[Callable[..., object]], Callable[..., object]]:
+    """Mark a class method as a class-level validator over the whole instance.
+
+    Class-level validators run *after* every per-field validator and
+    every ``__axioms__`` check have already passed. The method
+    receives the constructed instance and may ``raise ValueError`` /
+    ``raise TypeError`` to reject it; the failure surfaces as a
+    ``ValidationError`` entry with ``type="validator_error"`` and an
+    empty ``loc`` (i.e. ``loc=()`` -- the failure spans the whole
+    model, not any single field).
+
+    Use this for cross-field invariants that don't fit a single-field
+    ``@validates`` and that aren't expressible in the
+    ``__axioms__`` surface syntax. Pydantic users will recognise the
+    shape: this is the rough equivalent of Pydantic v2's
+    ``@model_validator(mode="after")``.
+
+    Parameters
+    ----------
+    mode
+        Currently only ``"after"`` is supported. ``"before"`` is
+        reserved for a future pre-construction hook.
+
+    Returns
+    -------
+    Callable
+        A decorator that tags the wrapped method for the metaclass to
+        register on the class.
+
+    Examples
+    --------
+    >>> import didactic.api as dx
+    >>> class Rules(dx.Model):
+    ...     binary_rules: tuple[str, ...]
+    ...     binary_weights: tuple[float, ...] | None = None
+    ...
+    ...     @dx.model_validator()
+    ...     def _check_lengths(self) -> "Rules":
+    ...         if self.binary_weights is not None and (
+    ...             len(self.binary_weights) != len(self.binary_rules)
+    ...         ):
+    ...             raise ValueError(
+    ...                 "binary_weights length must match binary_rules length"
+    ...             )
+    ...         return self
+    """
+    if mode != "after":
+        msg = f"model_validator(mode=...) currently only accepts 'after'; got {mode!r}"
+        raise ValueError(msg)
+
+    def decorator(fn: Callable[..., object]) -> Callable[..., object]:
+        setattr(  # noqa: B010
+            fn,
+            "__didactic_model_validator__",
+            {"mode": mode},
+        )
+        return fn
+
+    return decorator
+
+
 __all__ = [
     "ValidationError",
     "ValidationErrorEntry",
+    "model_validator",
     "validates",
 ]

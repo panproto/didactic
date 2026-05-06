@@ -349,6 +349,7 @@ class ModelMeta(type):
     __computed_fields__: tuple[str, ...]
     __class_axioms__: tuple[Axiom, ...]
     __field_validators__: dict[str, tuple[tuple[str, str], ...]]
+    __model_validators__: tuple[str, ...]
     __theory_cache__: panproto.Theory | None
 
     @property
@@ -399,6 +400,7 @@ class ModelMeta(type):
             cls.__computed_fields__ = ()
             cls.__class_axioms__ = ()
             cls.__field_validators__ = {}
+            cls.__model_validators__ = ()
             return cls
 
         cls.__schema_kind__ = name
@@ -407,6 +409,7 @@ class ModelMeta(type):
         cls.__computed_fields__ = computed_field_names(cls)
         cls.__class_axioms__ = collect_class_axioms(cls)
         cls.__field_validators__ = ModelMeta.collect_field_validators(cls)
+        cls.__model_validators__ = ModelMeta.collect_model_validators(cls)
         # placeholder for the cached panproto.Theory; populated lazily
         # by the `__theory__` property the metaclass exposes below.
         cls.__theory_cache__ = None
@@ -602,6 +605,38 @@ class ModelMeta(type):
             for fname in field_names:
                 per_field.setdefault(fname, []).append((member_name, mode))
         return {fname: tuple(items) for fname, items in per_field.items()}
+
+    @staticmethod
+    def collect_model_validators(target: type) -> tuple[str, ...]:
+        """Walk MRO and collect ``@model_validator``-tagged methods.
+
+        Returns
+        -------
+        tuple of str
+            Method names, in MRO-then-declaration order. Methods are
+            stored by name (not bound callable) so a subclass override
+            takes effect through normal MRO at call time. A subclass
+            method that shadows a tagged ancestor *without* re-applying
+            ``@model_validator`` removes the ancestor's marker, matching
+            the per-field validator collection's policy.
+        """
+        markers: dict[str, dict[str, Opaque]] = {}
+        for klass in reversed(target.__mro__):
+            if not isinstance(klass, ModelMeta):
+                continue
+            for member_name, member in vars(klass).items():
+                if member_name.startswith("__"):
+                    continue
+                marker = getattr(member, "__didactic_model_validator__", None)
+                if marker is None:
+                    func = getattr(member, "__func__", None)
+                    if func is not None:
+                        marker = getattr(func, "__didactic_model_validator__", None)
+                if marker is not None:
+                    markers[member_name] = cast("dict[str, Opaque]", marker)
+                elif callable(member) and member_name in markers:
+                    del markers[member_name]
+        return tuple(markers)
 
 
 __all__ = [

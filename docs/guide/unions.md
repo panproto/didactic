@@ -107,6 +107,35 @@ unions: nested variants are written as their natural JSON shape
 (the discriminator key is the constructor tag) and reconstructed by
 dispatching each child dict through the live variant registry.
 
+## Union of two TaggedUnion roots
+
+A field annotated `A | B` where both `A` and `B` are `TaggedUnion`
+roots dispatches via the union of their variant registries:
+
+```python
+class A(dx.TaggedUnion, discriminator="kind"): ...
+
+class A1(A):
+    kind: Literal["a1"] = "a1"
+    name: str
+
+class B(dx.TaggedUnion, discriminator="kind"): ...
+
+class B1(B):
+    kind: Literal["b1"] = "b1"
+    name: str
+
+class Combo(dx.Model):
+    items: tuple[A | B, ...]
+```
+
+The two roots must share the same discriminator field name; their
+discriminator-value sets must be disjoint. The first requirement is
+checked at class-creation time; the second is checked the first time
+an actual encode or decode hits a colliding value (so a model whose
+union-typed field is never encoded with a colliding variant remains
+usable).
+
 ## Limitations
 
 Discriminator values must be string literals. Non-string discriminators

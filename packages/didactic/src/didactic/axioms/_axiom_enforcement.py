@@ -269,6 +269,7 @@ _APP_BUILTINS_BY_NAME: dict[str, Callable[[list[FieldValue]], FieldValue]] = {
     "max": lambda a: max(a[0], a[1]),  # type: ignore[type-var]
     "abs": lambda a: abs(a[0]),  # type: ignore[arg-type]
     "len": lambda a: len(a[0]),  # type: ignore[arg-type]
+    "length": lambda a: len(a[0]),  # type: ignore[arg-type]
     "and": lambda a: all(bool(x) for x in cast("list[object]", a[0])),
     "or": lambda a: any(bool(x) for x in cast("list[object]", a[0])),
     "all": lambda a: all(bool(x) for x in cast("list[object]", a[0])),
@@ -278,6 +279,12 @@ _APP_BUILTINS_BY_NAME: dict[str, Callable[[list[FieldValue]], FieldValue]] = {
     "fst": lambda a: a[0][0],  # type: ignore[index]
     "snd": lambda a: a[0][1],  # type: ignore[index]
     "id": lambda a: a[0],
+    # Optional-field shortcuts. Mirror the ``X is null`` / ``X is not null``
+    # preprocessing rules so users can write Pythonic predicates either way.
+    "isNone": lambda a: a[0] is None,
+    "isNull": lambda a: a[0] is None,
+    "isSome": lambda a: a[0] is not None,
+    "isJust": lambda a: a[0] is not None,
 }
 
 
@@ -437,8 +444,11 @@ def _evaluate_builtin(
     if op == "Neg":
         return -_evaluate(args[0], env)  # type: ignore[operator]
 
-    # length-style helpers (axioms about collection sizes are common)
-    if op == "Len":
+    # length-style helpers (axioms about collection sizes are common).
+    # ``Length`` is the long-form builtin panproto produces for
+    # ``length xs``; ``Len`` is the form ``len xs`` gives. Both
+    # resolve to Python ``len(...)``.
+    if op in ("Len", "Length"):
         return len(_evaluate(args[0], env))  # type: ignore[arg-type]
     if op == "Head":
         seq = cast("Sequence[FieldValue]", _evaluate(args[0], env))

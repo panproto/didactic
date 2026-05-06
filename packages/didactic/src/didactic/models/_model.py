@@ -260,6 +260,28 @@ class Model(metaclass=ModelMeta):
                 )
                 raise ValidationError(entries=axiom_errors, model=cls)
 
+        # ``@model_validator``-tagged class methods run last, on the
+        # constructed instance. They get to see every field already
+        # decoded and every axiom already passed. ``raise ValueError``
+        # / ``raise TypeError`` from any of them surfaces as a
+        # ``ValidationError`` entry with empty ``loc`` (the failure
+        # spans the whole model, not any single field).
+        if cls.__model_validators__:
+            model_errors: list[ValidationErrorEntry] = []
+            for method_name in cls.__model_validators__:
+                try:
+                    getattr(self, method_name)()
+                except (ValueError, TypeError) as exc:
+                    model_errors.append(
+                        ValidationErrorEntry(
+                            loc=(),
+                            type="validator_error",
+                            msg=str(exc),
+                        )
+                    )
+            if model_errors:
+                raise ValidationError(entries=tuple(model_errors), model=cls)
+
     # -- attribute access ---------------------------------------------------
 
     def __getattr__(self, name: str) -> FieldValue:

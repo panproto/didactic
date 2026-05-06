@@ -99,7 +99,7 @@ extend-ignore-names = ["A", "B", "T", "P"]
 # ``_substitute_typevars`` shape-dispatches across many origin variants
 # (TypeVar, Union, Annotated, parametric generic, leaf, missing-args);
 # flattening into helpers obscures the table of cases.
-"**/models/_model.py" = ["PLR0911", "PLR0912"]
+"**/models/_model.py" = ["PLR0911", "PLR0912", "PLR0915"]
 # tests aren't third-party-import-restricted
 "packages/didactic-settings/tests/*.py" = ["TC001", "TC002", "TC003"]
 # fastapi handler does runtime-only imports inside the function body
