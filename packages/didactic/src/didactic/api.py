@@ -48,6 +48,7 @@ from didactic.fields._unions import TaggedUnion
 from didactic.fields._validators import (
     ValidationError,
     ValidationErrorEntry,
+    model_validator,
     validates,
 )
 from didactic.lenses import _testing as testing
@@ -68,7 +69,7 @@ from didactic.types import _types_lib as types
 from didactic.vcs._backref import ModelPool, resolve_backrefs
 from didactic.vcs._repo import Repository
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 
 #: Conventional namespace for lens utilities (`dx.lens.identity(...)`,
 #: `dx.lens.Lens`, etc.). The ``lens`` name doubles as a decorator
@@ -113,6 +114,7 @@ __all__ = [
     "lens",
     "load_registry",
     "migrate",
+    "model_validator",
     "register_migration",
     "resolve_backrefs",
     "save_registry",

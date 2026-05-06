@@ -134,7 +134,8 @@ field skips validation.
 ## Cross-field invariants
 
 `@validates` runs against one field at a time. For a check that
-spans multiple fields, declare an [axiom](axioms.md) instead:
+spans multiple fields, prefer an [axiom](axioms.md) when the
+constraint is expressible in the surface syntax:
 
 ```python
 class Range(dx.Model):
@@ -143,6 +144,43 @@ class Range(dx.Model):
 
     __axioms__ = [dx.axiom("low <= high")]
 ```
+
+When the check needs Python (cross-collection consistency, length
+matching across two optional fields, anything that can't be cleanly
+written as an axiom expression), use `@dx.model_validator()`. The
+decorated method receives the constructed instance and may
+`raise ValueError` / `raise TypeError` to reject it; failures
+surface as `ValidationError` entries with `type="validator_error"`
+and an empty `loc`:
+
+```python
+import didactic.api as dx
+
+
+class Rules(dx.Model):
+    binary_rules: tuple[str, ...] = ()
+    binary_weights: tuple[float, ...] | None = None
+
+    @dx.model_validator()
+    def _check_lengths(self) -> "Rules":
+        if self.binary_weights is not None and len(self.binary_weights) != len(
+            self.binary_rules
+        ):
+            raise ValueError(
+                "binary_weights length must match binary_rules length"
+            )
+        return self
+```
+
+Class-level validators run *after* every per-field `@validates` and
+every `__axioms__` check have passed. Multiple `@model_validator`
+methods on the same class run in declaration order; failures from
+all of them are collected into a single `ValidationError`. Subclass
+inheritance and silent-shadow disable work the same as for
+`@validates`.
+
+`mode="before"` is reserved for a future pre-construction hook;
+only `mode="after"` (the default) is currently accepted.
 
 ## Validators do not travel with the Theory
 

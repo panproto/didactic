@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-06
+
+### Added
+
+- Field annotations of the form ``A | B`` where both ``A`` and ``B``
+  are ``TaggedUnion`` roots are now classified as a multi-root
+  discriminated union. The two arms must share the same discriminator
+  field name (checked at class-creation time) and their
+  discriminator-value sets must be disjoint (checked lazily, only on
+  encode/decode of an actually colliding value, so a model whose
+  union-typed field is never encoded with a colliding variant remains
+  usable). Encode and decode both consult the live merged variant
+  registry, so variants registered after the field's parent class is
+  classified participate fully. ([#30])
+- ``@dx.model_validator(mode="after")`` decorates a class method as a
+  class-level validator that receives the constructed instance and
+  runs after every per-field validator and every ``__axioms__`` check.
+  ``raise ValueError`` / ``raise TypeError`` from the body surfaces
+  as a ``ValidationError`` entry with ``type="validator_error"`` and
+  empty ``loc``. Multiple model validators on one class collect into
+  a single error. Subclass inheritance and the silent-shadow
+  override-without-marker policy work the same as for ``@validates``.
+  Use this for cross-field invariants that aren't expressible in the
+  ``__axioms__`` surface syntax. The shape mirrors Pydantic v2's
+  ``@model_validator(mode="after")``. ([#31])
+
+### Fixed
+
+- The axiom evaluator now resolves ``length xs`` (panproto's
+  long-form length builtin) the same as ``len xs``. Both compile to
+  Python ``len(...)``. ([#31])
+- ``isNone`` / ``isNull`` / ``isSome`` / ``isJust`` builtins resolve
+  to the obvious ``value is None`` / ``value is not None`` predicates
+  in axiom expressions. The Python-friendly ``is null`` /
+  ``is not null`` preprocessor rules from v0.5.1 already covered the
+  most common spelling; these add the explicit-call form for axioms
+  that prefer it. ([#31])
+
+### Changed
+
+- ``docs/guide/unions.md`` documents the union-of-TaggedUnion-roots
+  shape with the disjoint-values requirement spelled out.
+- ``docs/guide/validators.md`` documents ``@dx.model_validator`` and
+  the cross-field-invariants decision tree (axiom for surface-syntax
+  expressible, model_validator for Python-needed).
+
+[#30]: https://github.com/panproto/didactic/issues/30
+[#31]: https://github.com/panproto/didactic/issues/31
+
 ## [0.5.2] - 2026-05-05
 
 ### Fixed

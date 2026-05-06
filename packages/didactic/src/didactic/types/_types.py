@@ -1375,6 +1375,149 @@ def _tagged_union_aux_spec(
     return tuple(sorts), tuple(ops)
 
 
+def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
+    """Classify ``A | B | ...`` where every arm is a ``TaggedUnion`` root.
+
+    Dispatches at runtime via the union of the roots' variant
+    registries. Requires every root to share the same discriminator
+    field name (otherwise the wire format would not unambiguously
+    identify a variant) and requires the discriminator-value sets to
+    be disjoint across roots (otherwise dispatch is ambiguous).
+    Both checks happen at classify time; failure raises
+    ``TypeNotSupportedError`` with a message naming the offending
+    spelling.
+
+    The auxiliary Theory shape (``aux_sorts`` / ``aux_ops``) names the
+    union as ``<RootA>__or__<RootB>`` and contributes one constructor
+    op per variant from every root, mirroring the single-root
+    translation.
+    """
+    discriminators = {
+        cast("str | None", getattr(root, "__discriminator__", None)) for root in roots
+    }
+    if len(discriminators) != 1 or None in discriminators:
+        names = sorted(r.__name__ for r in roots)
+        msg = (
+            "Union of TaggedUnion roots requires every arm to share the same "
+            f"discriminator field name; got roots {names!r} with "
+            f"discriminators {sorted(filter(None, discriminators))!r}."
+        )
+        raise TypeNotSupportedError(msg)
+    discriminator = cast("str", next(iter(discriminators)))
+    union_name = "__or__".join(r.__name__ for r in roots)
+
+    def current_variants() -> dict[object, type[Model]]:
+        """Snapshot the merged variant table; last-writer-wins on collisions.
+
+        Overlap detection is deferred to the encode/decode paths via
+        ``_check_overlap_for(value)`` so a model whose union-typed field
+        is *never* encoded with a colliding variant remains usable. The
+        failure message at encode time names both colliding classes.
+        """
+        merged: dict[object, type[Model]] = {}
+        for root in roots:
+            live = cast(
+                "dict[object, type[Model]]",
+                root.__variants__,  # type: ignore[attr-defined]
+            )
+            merged.update(live)
+        return merged
+
+    def _check_overlap_for(value: object) -> None:
+        owners: list[type[Model]] = []
+        for root in roots:
+            live = cast(
+                "dict[object, type[Model]]",
+                root.__variants__,  # type: ignore[attr-defined]
+            )
+            owner = live.get(value)
+            if owner is not None and owner not in owners:
+                owners.append(owner)
+        if len(owners) > 1:
+            root_names = sorted(r.__name__ for r in roots)
+            owner_names = sorted(o.__name__ for o in owners)
+            msg = (
+                f"Union of TaggedUnion roots {root_names!r} has "
+                f"overlapping discriminator value {value!r}: registered "
+                f"to {owner_names!r}. Discriminator values must be "
+                "disjoint across union arms."
+            )
+            raise TypeError(msg)
+
+    aux_sorts, aux_ops = _tagged_union_aux_spec(
+        union_name, discriminator, current_variants()
+    )
+
+    def encode_one(value: object) -> JsonValue:
+        variants = current_variants()
+        if isinstance(value, dict) and discriminator in value:
+            payload = cast("dict[str, JsonValue]", value)
+            disc_value = cast("object", payload[discriminator])
+            _check_overlap_for(disc_value)
+            variant_cls = variants.get(disc_value)
+            if variant_cls is not None:
+                instance = variant_cls.model_validate_json(json.dumps(payload))
+                return cast("JsonValue", json.loads(instance.model_dump_json()))
+        instance_disc = getattr(cast("object", value), discriminator, None)
+        if instance_disc is not None:
+            _check_overlap_for(instance_disc)
+        for variant_cls in variants.values():
+            if isinstance(value, variant_cls):
+                return cast("JsonValue", json.loads(value.model_dump_json()))
+        variant_names = sorted(cast("type", v).__name__ for v in variants.values())
+        value_type_name = type(cast("object", value)).__name__
+        msg = (
+            f"value of type {value_type_name} is not a registered variant "
+            f"of {union_name!r}; expected one of {variant_names}."
+        )
+        raise TypeError(msg)
+
+    def decode_one(payload: JsonValue) -> FieldValue:
+        variants = current_variants()
+        if not isinstance(payload, dict):
+            msg = (
+                f"{union_name!r} payload must be a dict; got {type(payload).__name__}."
+            )
+            raise TypeError(msg)
+        if discriminator not in payload:
+            msg = (
+                f"{union_name!r} payload is missing discriminator "
+                f"field {discriminator!r}; got keys {sorted(payload)!r}."
+            )
+            raise KeyError(discriminator)
+        disc_value = payload[discriminator]
+        _check_overlap_for(disc_value)
+        variant_cls = variants.get(disc_value)
+        if variant_cls is None:
+            known_values = [repr(v) for v in variants]
+            msg = (
+                f"{union_name!r} has no variant registered for "
+                f"{discriminator}={disc_value!r}; expected one of "
+                f"{known_values}."
+            )
+            raise KeyError(disc_value)
+        return variant_cls.model_validate_json(json.dumps(payload))
+
+    def enc(v: FieldValue) -> Encoded:
+        return json.dumps(encode_one(v))
+
+    def dec(s: Encoded) -> FieldValue:
+        return decode_one(json.loads(s))
+
+    def from_json(v: JsonValue) -> FieldValue:
+        return decode_one(v)
+
+    return TypeTranslation(
+        sort=union_name,
+        encode=enc,
+        decode=dec,
+        inner_kind="sum",
+        from_json=from_json,
+        auxiliary_sorts=aux_sorts,
+        auxiliary_ops=aux_ops,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Annotated handling
 # ---------------------------------------------------------------------------
@@ -1795,9 +1938,15 @@ def classify(typ: TypeForm) -> TypeTranslation:
     origin = get_origin(inner_type)
     args = get_args(inner_type)
 
-    # union of primitive scalars (e.g. ``int | str``); raw unions of
-    # non-primitives still raise via _classify_primitive_union below.
+    # union of primitive scalars (e.g. ``int | str``) or of TaggedUnion
+    # roots (e.g. ``A | B`` where both are TaggedUnion roots); raw unions
+    # of non-primitives still raise via ``_classify_primitive_union``
+    # below.
     if origin in {Union, UnionType}:
+        if all(_is_tagged_union_root(arm) for arm in args if isinstance(arm, type)):
+            tagged_arms = [arm for arm in args if isinstance(arm, type)]
+            if len(tagged_arms) == len(args) and len(tagged_arms) >= 2:
+                return _classify_tagged_union_union(tuple(tagged_arms))
         return _classify_primitive_union(args)
 
     if origin is tuple:
