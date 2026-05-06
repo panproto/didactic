@@ -19,9 +19,19 @@ import didactic.api as dx
 type _MyValue = str | int | None | dict[str, "_MyValue"] | tuple["_MyValue", ...]
 
 
+def _empty_metadata() -> dict[str, _MyValue]:
+    return {}
+
+
+def _empty_tagged_elements() -> dict[str, tuple[str, ...]]:
+    return {}
+
+
 class _Holder(dx.Model):
-    metadata: dict[str, _MyValue] = dx.field(default_factory=dict)
-    tagged_elements: dict[str, tuple[str, ...]] = dx.field(default_factory=dict)
+    metadata: dict[str, _MyValue] = dx.field(default_factory=_empty_metadata)
+    tagged_elements: dict[str, tuple[str, ...]] = dx.field(
+        default_factory=_empty_tagged_elements
+    )
 
 
 def test_with_accepts_typed_dict_str_to_my_value() -> None:
