@@ -90,6 +90,13 @@ class User(dx.Model):
 A field whose annotation contains a list, set, or plain dict raises
 `TypeNotSupportedError` at class-creation time.
 
+The element type `T` may be any classifiable type, including a
+nested `dx.Model`. `tuple[Operation, ...]`, `dict[str, Operation]`,
+and a single `Operation` field type all classify through the same
+translation as `Embed[Operation]`. See
+[References and embedding](refs.md#bare-model-field-types) for the
+details.
+
 ## Constrained scalars from `didactic.types`
 
 `didactic.types` re-exports a small library of constrained scalar

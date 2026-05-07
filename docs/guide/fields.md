@@ -92,6 +92,40 @@ Supported markers:
   verbatim in `FieldSpec.extras["annotated_metadata"]` so downstream
   tooling can read it.
 
+## Opaque fields
+
+`dx.field(opaque=True)` declares a field that holds any Python
+value by reference and skips the type-classification pipeline. The
+runtime stores the value on a per-instance side table; attribute
+access returns the same object instance, and `with_(...)` updates
+it without re-classification.
+
+```python
+class Handler(dx.Model):
+    target: object = dx.field(opaque=True)
+    name: str = "anon"
+
+
+h = Handler(target=some_runtime_object, name="primary")
+assert h.target is some_runtime_object
+```
+
+Useful for fields that carry a runtime-only handle: a typeclass
+instance, a callback, a foreign object whose class panproto can't
+classify. The contract is explicit:
+
+- Construction accepts any Python value; no type check is applied.
+- Attribute access and `with_(...)` preserve identity.
+- `model_dump_json` writes `null` for opaque fields, and
+  `model_validate_json` does *not* reconstruct the value: opaque
+  fields don't have a wire form.
+- Defaults work normally: `default=` for a static value,
+  `default_factory=` for a per-instance default.
+
+If you want JSON round-trips, model the field as a regular
+(classified) type. Use `opaque=True` only when the indirection or
+the lack of a wire form is intentional.
+
 ## Field inspection
 
 `__field_specs__` exposes every field's resolved record:

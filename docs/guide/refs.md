@@ -58,6 +58,32 @@ User(id="u1", home={"street": "221b Baker", "city": "London"})
 Both calls produce the same `User`. JSON serialisation recurses
 through the embed.
 
+### Bare-Model field types
+
+A bare `dx.Model` subclass used directly as a field type classifies
+through the same translation as `Embed[T]`. The two forms are
+interchangeable: spell out `Embed[T]` when the indirection adds
+documentation value, or drop the wrapper for plain nested records.
+
+```python
+class Operation(dx.Model):
+    name: str
+    arity: int = 0
+
+
+class EffectSignature(dx.Model):
+    operations: tuple[Operation, ...] = ()
+    by_name: dict[str, Operation] = dx.field(default_factory=dict)
+    head: Operation | None = None
+```
+
+`tuple[Model, ...]`, `dict[str, Model]`, and a single `field: Model`
+all work without the single-variant `TaggedUnion` wrapper that would
+otherwise be needed to assemble heterogeneous record collections.
+Models that are `TaggedUnion` roots (or one of their variants) keep
+their discriminated dispatch path; the bare-Model branch only fires
+for plain Model subclasses.
+
 ## Backref
 
 `Backref[T, "field"]` declares the inverse direction of a `Ref`.
