@@ -1119,6 +1119,15 @@ def _from_json_payload(
             # unknown fields fall through; the Model __init__ will reject them
             out[fname] = raw
             continue
+        if spec.is_opaque:
+            # Opaque fields don't have a wire form. The serialised
+            # payload's ``null`` placeholder is dropped here so
+            # construction falls back to the field's default (or
+            # surfaces a ``missing_required`` error if there is no
+            # default). Routing the placeholder through the opaque
+            # translation's ``from_json`` would raise -- by design it
+            # refuses to fabricate a value out of thin air.
+            continue
         out[fname] = spec.translation.from_json(raw)
     return out
 

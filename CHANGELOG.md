@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-07
+
+### Fixed
+
+- ``model_validate_json`` no longer crashes for Models that carry an
+  opaque field. The ``null`` placeholder ``model_dump_json`` writes
+  is dropped during JSON-payload conversion (the opaque
+  translation's ``from_json`` would otherwise raise, by design); the
+  field falls back to its declared default. A required opaque field
+  with no default surfaces a clean ``missing_required``
+  ``ValidationError`` on round-trip instead of a bare ``TypeError``.
+  ``docs/guide/fields.md`` updated to spell out this behaviour
+  precisely.
+
 ## [0.7.0] - 2026-05-07
 
 ### Added
