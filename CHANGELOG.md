@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-07
+
+### Added
+
+- ``tuple[Model, ...]`` (and ``dict[str, Model]``, plain
+  ``inner: Model``) now classifies any ``dx.Model`` subclass used
+  directly as a field type. The classification routes through the
+  same Embed-shaped translation that ``Embed[T]`` would have built,
+  so the wire format and runtime semantics are identical and
+  callers no longer need a single-variant ``TaggedUnion`` wrapper to
+  collect heterogeneous record tuples. Models that are
+  ``TaggedUnion`` roots or variants stay on the discriminated path.
+  ([#38])
+- ``dx.field(opaque=True)`` declares a field that holds any Python
+  value by reference and skips the type-classification pipeline
+  entirely. The runtime stores the value on a per-instance
+  ``_opaque_storage`` side table; attribute access returns it
+  identity-equal; ``with_(...)`` updates it without
+  re-classification. JSON output writes ``null`` for opaque fields,
+  and ``model_validate_json`` does not reconstruct the value: opaque
+  fields explicitly do not round-trip through serialisation. Useful
+  for fields that carry a runtime-only handle (a typeclass instance,
+  a callback, a foreign object) where panproto schema integration is
+  not the goal. ([#39])
+
+### Changed
+
+- The documentation site uses the cinder theme. The previous
+  Material configuration is replaced by ``theme: name: cinder`` plus
+  a small ``docs/css/`` palette covering pygments token colours and
+  mkdocstrings layout. CI no longer needs the
+  ``NO_MKDOCS_2_WARNING`` workaround; the same env var has been
+  removed from ``ci.yml`` / ``docs.yml`` / ``release.yml`` and from
+  the README's local-build snippet.
+
+[#38]: https://github.com/panproto/didactic/issues/38
+[#39]: https://github.com/panproto/didactic/issues/39
+
 ## [0.6.2] - 2026-05-06
 
 ### Fixed

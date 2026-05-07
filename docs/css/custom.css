@@ -1,0 +1,87 @@
+/* code blocks: dark grey background */
+.codehilite,
+.highlight {
+    background: #2b2b2b !important;
+    border-radius: 6px;
+    padding: 0.8em 1em;
+}
+
+.codehilite pre,
+.highlight pre {
+    background: transparent !important;
+    margin: 0;
+}
+
+pre code {
+    font-size: 0.9em;
+    color: #f8f8f2;
+}
+
+/* API docs from mkdocstrings */
+.doc-heading code {
+    font-size: 1.1em;
+}
+
+.doc-contents {
+    padding-left: 1.5em;
+    border-left: 3px solid #eee;
+}
+
+/* ================================================================
+   Pygments token coloring for the dark code-block background.
+   Targets both .codehilite and .highlight wrappers.
+   ================================================================ */
+
+/* declaration keywords */
+.codehilite .kd, .highlight .kd { color: #c792ea !important; font-weight: bold !important; }
+
+/* reserved keywords */
+.codehilite .kr, .highlight .kr { color: #ff79c6 !important; font-weight: bold !important; }
+
+/* type keywords / type annotations */
+.codehilite .kt, .highlight .kt { color: #82aaff !important; font-weight: bold !important; }
+
+/* decorators (Name.Decorator) */
+.codehilite .nd, .highlight .nd { color: #ffcb6b !important; font-weight: bold !important; }
+
+/* class names (Name.Class) */
+.codehilite .nc, .highlight .nc { color: #89ddff !important; font-weight: bold !important; }
+
+/* built-in functions (Name.Builtin) */
+.codehilite .nb, .highlight .nb { color: #c3e88d !important; }
+
+/* constants (Name.Constant) */
+.codehilite .no, .highlight .no { color: #c3e88d !important; font-style: italic !important; }
+
+/* string symbols */
+.codehilite .ss, .highlight .ss { color: #c3e88d !important; font-style: italic !important; }
+
+/* keyword arguments (Name.Attribute) */
+.codehilite .na, .highlight .na { color: #ffcb6b !important; }
+
+/* variable names (Name.Variable) */
+.codehilite .nv, .highlight .nv { color: #eeffff !important; }
+
+/* arithmetic / structural operators */
+.codehilite .o, .highlight .o { color: #89ddff !important; }
+
+/* numbers */
+.codehilite .mf, .highlight .mf { color: #f78c6c !important; }
+.codehilite .mi, .highlight .mi { color: #f78c6c !important; }
+
+/* comments */
+.codehilite .c1, .highlight .c1 { color: #7c8fa4 !important; font-style: italic !important; }
+
+/* punctuation */
+.codehilite .p, .highlight .p { color: #89ddff !important; }
+
+/* generic keyword fallback */
+.codehilite .k, .highlight .k { color: #c792ea !important; font-weight: bold !important; }
+
+/* generic name fallback */
+.codehilite .n, .highlight .n { color: #eeffff !important; }
+
+/* string literals */
+.codehilite .s, .highlight .s,
+.codehilite .s1, .highlight .s1,
+.codehilite .s2, .highlight .s2 { color: #c3e88d !important; }

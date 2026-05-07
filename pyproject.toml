@@ -21,9 +21,12 @@ dev = [
     "ruff>=0.8",
     "pyright>=1.1.388",
     "mypy>=1.13",
-    "mkdocs-material>=9.5",
+    "mkdocs>=1.6",
+    "mkdocs-cinder>=1.2",
     "mkdocstrings[python]>=0.27",
     "mkdocs-autorefs>=1.2",
+    "pymdown-extensions>=10.7",
+    "pygments>=2.18",
     "griffe>=1.5",
 ]
 

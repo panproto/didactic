@@ -1934,6 +1934,17 @@ def classify(typ: TypeForm) -> TypeTranslation:
     if isinstance(inner_type, type) and _is_tagged_union_root(inner_type):
         return _tagged_union_translation(inner_type)
 
+    # Bare ``dx.Model`` subclass used as a field type (``items:
+    # tuple[Operation, ...]``, ``inner: Operation``). Treat the
+    # annotation as if it had been written ``Embed[T]`` -- the wire
+    # contract and runtime semantics are identical, and forcing
+    # callers to spell out ``Embed`` for every nested record produces
+    # boilerplate without information gain. Models that are
+    # ``TaggedUnion`` roots have already been routed to the discriminated
+    # path above.
+    if isinstance(inner_type, type) and _is_bare_model_field_target(inner_type):
+        return _bare_model_translation(inner_type)
+
     # parameterised generics
     origin = get_origin(inner_type)
     args = get_args(inner_type)
@@ -2059,6 +2070,79 @@ def _has_embed_marker(metadata: tuple[Opaque, ...]) -> bool:
     from didactic.fields._refs import EmbedSentinel  # noqa: PLC0415
 
     return any(isinstance(m, EmbedSentinel) for m in metadata)
+
+
+def _is_bare_model_field_target(cls: type) -> bool:
+    """Tell whether ``cls`` is a bare ``dx.Model`` usable as ``Embed[cls]``.
+
+    Returns False for ``Model`` itself, for ``TaggedUnion`` (the union
+    base class), and for any subclass that is also a ``TaggedUnion``
+    root or one of its variants -- those have their own field-type
+    classification path. Unparameterised generic Models are also
+    excluded since their fields can't round-trip until parameterised.
+    """
+    from didactic.fields._unions import TaggedUnion  # noqa: PLC0415
+    from didactic.models._model import Model  # noqa: PLC0415
+
+    if cls is Model or cls is TaggedUnion:
+        return False
+    if not issubclass(cls, Model):
+        return False
+    # Variants and roots both go through the discriminated path: variants
+    # because they're handled inside the root's translation, roots because
+    # the bare-Model path would lose the dispatch shape.
+    return not issubclass(cls, TaggedUnion)
+
+
+def _bare_model_translation(target_cls: type) -> TypeTranslation:
+    """Build the Embed-shaped translation for a bare ``dx.Model`` field type.
+
+    Synthesises the same ``TypeTranslation`` that
+    ``_embed_translation(target_cls, (EmbedSentinel(),))`` would build,
+    without the caller having to spell ``Embed[T]``. The wire format
+    and runtime semantics are identical to the explicit-Embed path.
+    """
+    from didactic.fields._refs import EmbedSentinel  # noqa: PLC0415
+
+    return _embed_translation(target_cls, (EmbedSentinel(),))
+
+
+def make_opaque_translation() -> TypeTranslation:
+    """Build the translation used for ``dx.field(opaque=True)`` fields.
+
+    The encode/decode pair is never actually invoked: ``Model.__init__``
+    short-circuits opaque fields and stores the raw value in a
+    per-instance side table (``_opaque_storage``); ``__getattr__``
+    pulls from that table without going through the encoded
+    ``_storage``. The translation exists only so the rest of the
+    machinery (FieldSpec, Theory build, codegen tooling) has something
+    to pattern-match without a special-case ``None`` check.
+
+    The wire-format functions return defensive sentinels so any caller
+    that *does* route an opaque field through them (e.g. a stale
+    ``model_validate_json`` payload) sees a clear error rather than a
+    silently-corrupted value.
+    """
+
+    def enc(_: FieldValue) -> Encoded:
+        msg = "opaque fields do not round-trip through the encoder"
+        raise TypeError(msg)
+
+    def dec(_: Encoded) -> FieldValue:
+        msg = "opaque fields do not round-trip through the decoder"
+        raise TypeError(msg)
+
+    def from_json(_: JsonValue) -> FieldValue:
+        msg = "opaque fields do not round-trip from JSON"
+        raise TypeError(msg)
+
+    return TypeTranslation(
+        sort="Opaque",
+        encode=enc,
+        decode=dec,
+        inner_kind="opaque",
+        from_json=from_json,
+    )
 
 
 def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTranslation:

@@ -1,52 +1,36 @@
 site_name: didactic
 site_description: A typed-data library on top of panproto. Models, lenses, migrations, version control, multi-format codegen.
 site_url: https://panproto.dev/didactic/
+site_author: panproto contributors
 repo_url: https://github.com/panproto/didactic
 repo_name: panproto/didactic
 edit_uri: edit/main/docs/
 
 theme:
-  name: material
-  features:
-    - navigation.sections
-    - navigation.expand
-    - navigation.indexes
-    - navigation.top
-    - navigation.tabs
-    - content.code.copy
-    - content.code.annotate
-    - search.suggest
-    - search.highlight
-    - toc.follow
-  palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: deep purple
-      accent: indigo
-      toggle:
-        icon: material/weather-sunny
-        name: switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: deep purple
-      accent: indigo
-      toggle:
-        icon: material/weather-night
-        name: switch to light mode
+  name: cinder
+  highlightjs: false
+
+extra_css:
+  - css/pygments.css
+  - css/custom.css
 
 markdown_extensions:
   - admonition
   - attr_list
+  - def_list
+  - footnotes
   - md_in_html
+  - tables
   - pymdownx.details
   - pymdownx.highlight:
+      use_pygments: true
+      guess_lang: false
       anchor_linenums: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
-  - tables
   - toc:
       permalink: true
 
@@ -54,6 +38,7 @@ plugins:
   - search
   - autorefs
   - mkdocstrings:
+      default_handler: python
       handlers:
         python:
           paths:
@@ -63,7 +48,7 @@ plugins:
             - packages/didactic-fastapi/src
           options:
             docstring_style: numpy
-            docstring_section_style: table
+            docstring_section_style: spacy
             show_root_heading: true
             show_source: false
             show_signature_annotations: true
@@ -72,6 +57,7 @@ plugins:
             merge_init_into_class: true
             inherited_members: false
             members_order: source
+            heading_level: 2
             filters:
               - "!^_"
               - "^__init__$"
