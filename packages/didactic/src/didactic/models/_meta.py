@@ -50,7 +50,7 @@ from didactic.fields._fields import (
     read_annotated_metadata,
 )
 from didactic.models._config import DEFAULT_CONFIG, ExtraPolicy, ModelConfig
-from didactic.types._types import TypeForm, classify
+from didactic.types._types import TypeForm, classify, make_opaque_translation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -282,6 +282,33 @@ def _build_field_spec(
     # to drop the residual ``TypeVar | ForwardRef`` arms from pyright's
     # view.
     type_form = cast("TypeForm", annotation)
+
+    # ``dx.field(opaque=True)`` short-circuits the type-classification
+    # path: the annotation is read for documentation, but the value is
+    # stored by-reference on the instance and never round-trips through
+    # the encoded storage. Use ``make_opaque_translation`` so the FieldSpec
+    # has a translation object the rest of the pipeline can pattern-match
+    # without a None check; the encode/decode never actually run because
+    # ``Model.__init__`` skips them for opaque fields.
+    if isinstance(raw_default, Field) and raw_default.opaque:
+        f = raw_default
+        return FieldSpec(
+            name=name,
+            annotation=annotation,
+            translation=make_opaque_translation(),
+            default=f.default,
+            default_factory=f.default_factory,
+            converter=f.converter,
+            alias=f.alias,
+            description=f.description,
+            examples=f.examples,
+            deprecated=f.deprecated,
+            nominal=f.nominal,
+            usage_mode=f.usage_mode,
+            extras=dict(f.extras) if f.extras else {},
+            is_opaque=True,
+        )
+
     translation = classify(type_form)
     annotated_meta = read_annotated_metadata(type_form)
 

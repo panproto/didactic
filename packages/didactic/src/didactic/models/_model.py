@@ -97,7 +97,7 @@ class Model(metaclass=ModelMeta):
     # are deliberately not declared as class-level annotations so the
     # metaclass's ``@dataclass_transform`` does not surface them as
     # synthesized ``__init__`` parameters in subclass type-checking.
-    __slots__ = ("_derived_cache", "_storage")
+    __slots__ = ("_derived_cache", "_opaque_storage", "_storage")
 
     # Class-level attributes synthesized by the metaclass at class
     # creation time. Declared here so type checkers see them on every
@@ -160,6 +160,7 @@ class Model(metaclass=ModelMeta):
         specs = cls.__field_specs__
 
         encoded: dict[str, Encoded] = {}
+        opaque_storage: dict[str, object] = {}
         errors: list[ValidationErrorEntry] = []
 
         # collect known kwargs
@@ -183,6 +184,14 @@ class Model(metaclass=ModelMeta):
                     msg = f"non-required field {fname!r} returned MISSING"
                     raise AssertionError(msg)
                 value = default
+
+            # Opaque fields skip the encoder entirely; the value sits in
+            # the per-instance ``_opaque_storage`` side table and the
+            # encoded ``_storage`` carries a deterministic placeholder.
+            if spec.is_opaque:
+                opaque_storage[fname] = value
+                encoded[fname] = "null"
+                continue
 
             try:
                 encoded_value = _run_field_pipeline(
@@ -239,6 +248,7 @@ class Model(metaclass=ModelMeta):
         # bypass our own __setattr__ guard
         object.__setattr__(self, "_storage", DictStorage(encoded))
         object.__setattr__(self, "_derived_cache", {})
+        object.__setattr__(self, "_opaque_storage", opaque_storage)
 
         # axiom enforcement: each class-level axiom is parsed via
         # panproto.parse_expr and evaluated against the field environment
@@ -310,6 +320,9 @@ class Model(metaclass=ModelMeta):
         except KeyError:
             msg = f"{cls.__name__!r} has no field {name!r}"
             raise AttributeError(msg) from None
+        if spec.is_opaque:
+            opaque_storage = cast("dict[str, object]", self._opaque_storage)
+            return cast("FieldValue", opaque_storage[name])
         encoded = self._storage.get(name)
         return spec.translation.decode(encoded)
 
@@ -345,6 +358,7 @@ class Model(metaclass=ModelMeta):
         specs = cls.__field_specs__
         errors: list[ValidationErrorEntry] = []
         encoded: dict[str, Encoded] = {}
+        opaque_overrides: dict[str, object] = {}
 
         for k, v in changes.items():
             if k not in specs:
@@ -355,6 +369,9 @@ class Model(metaclass=ModelMeta):
                         msg=f"unknown field {k!r}",
                     )
                 )
+                continue
+            if specs[k].is_opaque:
+                opaque_overrides[k] = v
                 continue
             try:
                 encoded[k] = _run_field_pipeline(cls, specs[k], k, v)
@@ -375,6 +392,12 @@ class Model(metaclass=ModelMeta):
         new_storage = self._storage.replaced(encoded)
         new = cls.__new__(cls)
         object.__setattr__(new, "_storage", new_storage)
+        # carry the existing opaque-storage forward, then apply overrides
+        old_opaque = cast("dict[str, object]", self._opaque_storage)
+        new_opaque = dict(old_opaque)
+        new_opaque.update(opaque_overrides)
+        object.__setattr__(new, "_opaque_storage", new_opaque)
+        object.__setattr__(new, "_derived_cache", {})
         return new
 
     # -- serialisation ------------------------------------------------------
@@ -424,6 +447,18 @@ class Model(metaclass=ModelMeta):
             if include is not None and fname not in include:
                 continue
             if exclude is not None and fname in exclude:
+                continue
+            # Opaque fields don't round-trip through the encoder; their
+            # value lives in the per-instance side table. ``model_dump``
+            # is a JSON-shaped projection, so an opaque value (which
+            # doesn't have a JSON form by contract) is rendered as
+            # ``None``. Callers that need to inspect the live object
+            # use direct attribute access; ``model_dump`` is for
+            # serialisation paths that explicitly skip opaque fields.
+            if spec.is_opaque:
+                key = spec.alias if by_alias and spec.alias else fname
+                if not exclude_none:
+                    result[key] = None
                 continue
             value = spec.translation.decode(self._storage.get(fname))
             if exclude_none and value is None:
@@ -695,8 +730,7 @@ class Model(metaclass=ModelMeta):
         """Pydantic-style ``ClassName(field=value, ...)`` repr."""
         cls = type(self)
         parts = ", ".join(
-            f"{fname}={spec.translation.decode(self._storage.get(fname))!r}"
-            for fname, spec in cls.__field_specs__.items()
+            f"{fname}={getattr(self, fname)!r}" for fname in cls.__field_specs__
         )
         return f"{cls.__name__}({parts})"
 
@@ -729,6 +763,13 @@ class Model(metaclass=ModelMeta):
         """
         new = cls.__new__(cls)
         object.__setattr__(new, "_storage", DictStorage(items))
+        object.__setattr__(new, "_derived_cache", {})
+        # opaque fields don't survive a pure storage-dict round-trip
+        # (their values live in a per-instance side table that ``items``
+        # doesn't carry); seed an empty side table so ``__getattr__``
+        # produces a clear KeyError if anyone reads an opaque field on
+        # a from_storage_dict-built instance.
+        object.__setattr__(new, "_opaque_storage", {})
         return new
 
     def to_storage_dict(self) -> dict[str, str]:
@@ -771,6 +812,9 @@ class Model(metaclass=ModelMeta):
         """
         object.__setattr__(self, "_storage", DictStorage(state))
         object.__setattr__(self, "_derived_cache", {})
+        # opaque fields aren't pickle-encoded (their values live by
+        # reference); seed an empty side table.
+        object.__setattr__(self, "_opaque_storage", {})
 
 
 # ---------------------------------------------------------------------------

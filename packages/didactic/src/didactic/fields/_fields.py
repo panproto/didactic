@@ -188,6 +188,7 @@ class Field:
     coercion: Callable[..., FieldValue] | None = None
     usage_mode: Literal["readwrite", "computed", "materialised"] = "readwrite"
     extras: Mapping[str, Opaque] | None = None
+    opaque: bool = False
 
     def __post_init__(self) -> None:
         """Validate exclusive options."""
@@ -210,6 +211,7 @@ def field[T](
     coercion: Callable[..., FieldValue] | None = ...,
     usage_mode: Literal["readwrite", "computed", "materialised"] = ...,
     extras: Mapping[str, Opaque] | None = ...,
+    opaque: bool = ...,
 ) -> T: ...
 @overload
 def field[T](
@@ -225,6 +227,7 @@ def field[T](
     coercion: Callable[..., FieldValue] | None = ...,
     usage_mode: Literal["readwrite", "computed", "materialised"] = ...,
     extras: Mapping[str, Opaque] | None = ...,
+    opaque: bool = ...,
 ) -> T: ...
 @overload
 def field(
@@ -239,6 +242,7 @@ def field(
     coercion: Callable[..., FieldValue] | None = ...,
     usage_mode: Literal["readwrite", "computed", "materialised"] = ...,
     extras: Mapping[str, Opaque] | None = ...,
+    opaque: bool = ...,
 ) -> Any: ...  # documented escape hatch for required-with-metadata fields
 def field(
     *,
@@ -254,6 +258,7 @@ def field(
     coercion: Callable[..., FieldValue] | None = None,
     usage_mode: Literal["readwrite", "computed", "materialised"] = "readwrite",
     extras: Mapping[str, Opaque] | None = None,
+    opaque: bool = False,
 ) -> Field:
     """Construct a [Field][didactic.api.Field] descriptor.
 
@@ -323,6 +328,7 @@ def field(
         coercion=coercion,
         usage_mode=usage_mode,
         extras=extras,
+        opaque=opaque,
     )
 
 
@@ -390,6 +396,7 @@ class FieldSpec:
     extras: Mapping[str, Opaque] = _dc_field(
         default_factory=lambda: cast("dict[str, Opaque]", {})
     )
+    is_opaque: bool = False
 
     @property
     def is_required(self) -> bool:
