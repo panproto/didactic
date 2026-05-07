@@ -66,6 +66,33 @@ def test_opaque_field_writes_null_to_json() -> None:
     assert '"name": "h1"' in payload
 
 
+class _HandlerWithDefault(dx.Model):
+    target: object = dx.field(default=None, opaque=True)
+    name: str = "anon"
+
+
+def test_opaque_field_validate_json_falls_back_to_default() -> None:
+    """``model_validate_json`` drops the ``null`` placeholder.
+
+    Opaque fields don't reconstruct from the wire form; the placeholder
+    is ignored and the field falls back to its declared default. The
+    non-opaque sibling fields round-trip normally.
+    """
+    h = _HandlerWithDefault(target=_IdFunctor(), name="h1")
+    rt = _HandlerWithDefault.model_validate_json(h.model_dump_json())
+    assert rt.name == "h1"
+    assert rt.target is None
+
+
+def test_opaque_field_validate_json_required_without_default_errors() -> None:
+    """A required opaque field surfaces as ``missing_required`` on round-trip."""
+    h = _Handler(target=_IdFunctor(), name="h1")
+    with pytest.raises(dx.ValidationError) as exc:
+        _Handler.model_validate_json(h.model_dump_json())
+    types = {e.type for e in exc.value.entries}
+    assert "missing_required" in types
+
+
 def test_opaque_field_default() -> None:
     """Defaults work for opaque fields."""
 

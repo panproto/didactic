@@ -116,9 +116,12 @@ classify. The contract is explicit:
 
 - Construction accepts any Python value; no type check is applied.
 - Attribute access and `with_(...)` preserve identity.
-- `model_dump_json` writes `null` for opaque fields, and
-  `model_validate_json` does *not* reconstruct the value: opaque
-  fields don't have a wire form.
+- `model_dump_json` writes `null` for opaque fields. Opaque fields
+  don't have a wire form, so `model_validate_json` *drops the
+  serialised placeholder* and falls back to the field's default. A
+  required opaque field (no default) round-trips through JSON as a
+  `missing_required` `ValidationError`; an opaque field with a
+  default reconstructs as the default value.
 - Defaults work normally: `default=` for a static value,
   `default_factory=` for a per-instance default.
 
