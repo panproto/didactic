@@ -23,7 +23,6 @@ Mutable containers (`list`, `set`, plain `dict`) are rejected. Use
 | `datetime.datetime` | ISO 8601 | `datetime` |
 | `datetime.date` | ISO 8601 | `date` |
 | `datetime.time` | ISO 8601 | `time` |
-| `datetime.timedelta` | seconds | `timedelta` |
 | `decimal.Decimal` | numeric string | `Decimal` |
 | `uuid.UUID` | canonical | `UUID` |
 | `pathlib.Path` (and any `PurePath` subclass) | string | the same `PurePath` subclass |

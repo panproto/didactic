@@ -13,7 +13,7 @@ Compared to [computed][didactic.api.computed]:
 | evaluated... | every read | once at construction |
 | stored on instance | no | yes |
 | in ``model_dump`` | yes | yes |
-| in storage backend | no | no (lives on ``__derived_values__``) |
+| in storage backend | no | no (lives on ``_derived_cache``) |
 
 Use ``@derived`` when the computation is non-trivial and the inputs
 don't change after construction (which is the case for every Model,
@@ -67,8 +67,8 @@ def derived(fn: Callable[..., FieldValue]) -> property:
     -------
     property
         A descriptor that returns the cached value on access. The
-        cache lives on the instance under ``__derived_values__`` and
-        is populated by the metaclass after construction.
+        cache lives on the instance under ``_derived_cache`` and is
+        populated lazily on first read.
 
     Examples
     --------
