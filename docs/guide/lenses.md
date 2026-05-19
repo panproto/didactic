@@ -104,3 +104,13 @@ OpenAPI conversion, for instance), use
 against a pair of schemas. See the
 [reference page](../reference/lens.md#didactic.api.DependentLens) for the full
 surface.
+
+A chain can be authored declaratively in the `panproto-lens-dsl`
+surface (JSON, YAML, or Nickel) and loaded through
+[`DependentLens.from_dsl_path`][didactic.api.DependentLens.from_dsl_path]
+(extension-dispatched) or the format-specific
+[`from_dsl_json`][didactic.api.DependentLens.from_dsl_json],
+[`from_dsl_yaml`][didactic.api.DependentLens.from_dsl_yaml], and
+[`from_dsl_nickel`][didactic.api.DependentLens.from_dsl_nickel]
+classmethods. Each loader takes the document source plus the entry
+vertex of the source schema the chain is anchored against.

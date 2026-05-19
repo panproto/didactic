@@ -293,6 +293,22 @@ def test_source_parse_then_emit_round_trips_python() -> None:
     assert len(out) > 0
 
 
+def test_source_parse_emit_preserves_every_commasep_arg() -> None:
+    """Every comma-separated call argument survives parse / emit.
+
+    Exercises the ``FIELD(SEQ(SYMBOL, REPEAT(SEQ(',', SYMBOL))))`` path
+    that the underlying panproto emitter previously collapsed to a
+    single iteration. A regression here would emit ``f(1.0)`` for
+    ``f(1.0, 2.0, 3.0)``.
+    """
+    src = b"f(1.0, 2.0, 3.0)\n"
+    schema = dx.codegen.source.parse(src, protocol="python")
+    out = dx.codegen.source.emit(schema, protocol="python")
+    text = out.decode("utf-8")
+    for literal in ("1.0", "2.0", "3.0"):
+        assert literal in text, f"missing {literal!r} in re-emitted source {text!r}"
+
+
 def test_source_for_protocol_returns_callable() -> None:
     """``for_protocol`` returns a callable that parses bytes for the given grammar."""
     parser = dx.codegen.source.for_protocol("python")

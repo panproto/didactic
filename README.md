@@ -42,7 +42,7 @@ theory.op_count            # 3
 
 ## Install
 
-didactic targets Python 3.14 and panproto 0.43+.
+didactic targets Python 3.14 and panproto 0.48+.
 
 ```sh
 pip install didactic                # core
