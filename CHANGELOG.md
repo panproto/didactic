@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-19
+
+### Changed
+
+- Minimum ``panproto`` version raised from ``0.43.1`` to ``0.48.3``.
+  The bump pulls in the ``panproto-parse`` ``emit_pretty`` fixes that
+  affect ``didactic.codegen.source.emit_pretty`` directly: every
+  iteration of ``FIELD(REPEAT(...))`` and
+  ``FIELD(SEQ(SYMBOL, REPEAT(SEQ(',', SYMBOL))))`` is now rendered
+  (the prior wheel dropped all but the first), abstract-schema edge
+  order is preserved through ``pretty_with_protocol`` (children of
+  the same parent no longer re-fuse by kind), and indent-based
+  grammars open and close indent scopes on ``_indent`` / ``_dedent``
+  external tokens. A regression test in ``tests/test_codegen.py``
+  covers the comma-separated argument case end-to-end.
+
+### Added
+
+- ``DependentLens.from_dsl_json``, ``DependentLens.from_dsl_yaml``,
+  ``DependentLens.from_dsl_nickel``, and ``DependentLens.from_dsl_path``
+  compile a ``panproto-lens-dsl`` document into a chain. Each loader
+  takes the document source (or a path; ``from_dsl_path`` dispatches
+  on extension) plus the entry vertex of the source schema the chain
+  is being authored against.
+
 ## [0.7.1] - 2026-05-07
 
 ### Fixed

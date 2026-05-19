@@ -121,6 +121,12 @@ docstring-code-format = true
 pythonVersion = "3.14"
 pythonPlatform = "All"
 typeCheckingMode = "strict"
+# point pyright at the uv-managed venv so panproto's bundled stubs are
+# discovered without callers having to pass ``--pythonpath``. Without
+# this, every ``import panproto`` resolves to ``Unknown`` and the
+# downstream attribute types cascade into ``reportUnknownMemberType``.
+venvPath = "."
+venv = ".venv"
 include = [
     "packages/didactic/src",
     "packages/didactic-pydantic/src",

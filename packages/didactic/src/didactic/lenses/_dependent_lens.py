@@ -214,6 +214,117 @@ class DependentLens:
 
         return cls(panproto.ProtolensChain.from_json(json_text))
 
+    @classmethod
+    def from_dsl_json(cls, source: str, body_vertex: str) -> DependentLens:
+        """Compile a ``panproto-lens-dsl`` JSON document into a chain.
+
+        Parameters
+        ----------
+        source
+            The JSON surface of ``panproto-lens-dsl``: a top-level
+            document with ``id`` / ``description`` / ``steps`` (and
+            optional ``constraints`` / ``hints`` / ``preferences``).
+        body_vertex
+            Entry vertex of the source schema the chain is being
+            authored against. The DSL compiler uses it to anchor the
+            per-step protolens construction.
+
+        Returns
+        -------
+        DependentLens
+            The compiled chain.
+
+        Raises
+        ------
+        panproto.LensError
+            If ``source`` is not a valid lens-DSL document.
+        """
+        import panproto  # noqa: PLC0415
+
+        return cls(panproto.ProtolensChain.from_dsl_json(source, body_vertex))
+
+    @classmethod
+    def from_dsl_yaml(cls, source: str, body_vertex: str) -> DependentLens:
+        """Compile a ``panproto-lens-dsl`` YAML document into a chain.
+
+        Parameters
+        ----------
+        source
+            The YAML surface of ``panproto-lens-dsl``.
+        body_vertex
+            Entry vertex of the source schema; see
+            [from_dsl_json][didactic.api.DependentLens.from_dsl_json].
+
+        Returns
+        -------
+        DependentLens
+            The compiled chain.
+
+        Raises
+        ------
+        panproto.LensError
+            If ``source`` is not a valid lens-DSL document.
+        """
+        import panproto  # noqa: PLC0415
+
+        return cls(panproto.ProtolensChain.from_dsl_yaml(source, body_vertex))
+
+    @classmethod
+    def from_dsl_nickel(cls, source: str, body_vertex: str) -> DependentLens:
+        """Compile a ``panproto-lens-dsl`` Nickel document into a chain.
+
+        Parameters
+        ----------
+        source
+            The Nickel surface of ``panproto-lens-dsl``.
+        body_vertex
+            Entry vertex of the source schema; see
+            [from_dsl_json][didactic.api.DependentLens.from_dsl_json].
+
+        Returns
+        -------
+        DependentLens
+            The compiled chain.
+
+        Raises
+        ------
+        panproto.LensError
+            If ``source`` is not a valid lens-DSL document.
+        """
+        import panproto  # noqa: PLC0415
+
+        return cls(panproto.ProtolensChain.from_dsl_nickel(source, body_vertex))
+
+    @classmethod
+    def from_dsl_path(cls, path: str, body_vertex: str) -> DependentLens:
+        """Compile a ``panproto-lens-dsl`` document loaded from ``path``.
+
+        Dispatches on the file extension: ``.ncl`` is parsed as
+        Nickel, ``.json`` as JSON, ``.yaml`` / ``.yml`` as YAML.
+
+        Parameters
+        ----------
+        path
+            Filesystem path to a lens-DSL document.
+        body_vertex
+            Entry vertex of the source schema; see
+            [from_dsl_json][didactic.api.DependentLens.from_dsl_json].
+
+        Returns
+        -------
+        DependentLens
+            The compiled chain.
+
+        Raises
+        ------
+        panproto.LensError
+            If the file is missing or its contents are not a valid
+            lens-DSL document.
+        """
+        import panproto  # noqa: PLC0415
+
+        return cls(panproto.ProtolensChain.from_dsl_path(path, body_vertex))
+
     # operations ----------------------------------------------------
 
     def compose(self, other: DependentLens) -> DependentLens:
