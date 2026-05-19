@@ -122,7 +122,7 @@ requires-dist = [
 
 [[package]]
 name = "didactic-fastapi"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "packages/didactic-fastapi" }
 dependencies = [
     { name = "didactic" },
@@ -139,7 +139,7 @@ requires-dist = [
 
 [[package]]
 name = "didactic-pydantic"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "packages/didactic-pydantic" }
 dependencies = [
     { name = "didactic" },
@@ -154,7 +154,7 @@ requires-dist = [
 
 [[package]]
 name = "didactic-settings"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "packages/didactic-settings" }
 dependencies = [
     { name = "didactic" },
