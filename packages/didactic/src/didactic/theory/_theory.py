@@ -34,6 +34,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypedDict, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import panproto
 
     from didactic.fields._fields import FieldSpec
@@ -56,6 +58,31 @@ class TheorySpec(TypedDict):
     eqs: list[dict[str, JsonValue]]
     directed_eqs: list[dict[str, JsonValue]]
     policies: list[dict[str, JsonValue]]
+
+
+def _spec_payload(spec: TheorySpec) -> Mapping[str, JsonValue]:
+    """Narrow a ``TheorySpec`` to the mapping shape ``create_theory`` takes.
+
+    Parameters
+    ----------
+    spec
+        A spec dict from ``build_theory_spec``.
+
+    Returns
+    -------
+    Mapping
+        The same dict, typed as ``Mapping[str, JsonValue]``.
+
+    Notes
+    -----
+    The typing spec makes a ``TypedDict`` assignable to
+    ``Mapping[str, object]`` and to no mapping with a narrower value
+    type, so handing a ``TheorySpec`` to ``panproto.create_theory``
+    (whose parameter is ``Mapping[str, JsonValue]``) needs a cast at
+    the boundary. Every ``TheorySpec`` field type is a ``JsonValue``,
+    so the cast is sound.
+    """
+    return cast("Mapping[str, JsonValue]", spec)
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +374,7 @@ def build_theory(cls: type) -> panproto.Theory:
     if len(parents) <= 1:
         # single (or no) Model inheritance: the flat spec is correct
         spec = build_theory_spec(cls)
-        return panproto.create_theory(spec)
+        return panproto.create_theory(_spec_payload(spec))
 
     # multiple Model inheritance: compute the colimit of the parent
     # theories over their lowest common ancestor in the Model lineage
@@ -432,13 +459,15 @@ def _build_colimit_theory(cls: type, parents: list[type]) -> panproto.Theory:
     """
     import panproto  # noqa: PLC0415
 
-    accumulator = panproto.create_theory(build_theory_spec(parents[0]))
+    accumulator = panproto.create_theory(_spec_payload(build_theory_spec(parents[0])))
     accumulator_cls: type = parents[0]
 
     for parent in parents[1:]:
         ancestor = _lowest_common_model_ancestor([accumulator_cls, parent])
-        ancestor_theory = panproto.create_theory(build_theory_spec(ancestor))
-        next_theory = panproto.create_theory(build_theory_spec(parent))
+        ancestor_theory = panproto.create_theory(
+            _spec_payload(build_theory_spec(ancestor))
+        )
+        next_theory = panproto.create_theory(_spec_payload(build_theory_spec(parent)))
         accumulator = panproto.colimit_theories(
             accumulator, next_theory, ancestor_theory
         )
@@ -447,7 +476,7 @@ def _build_colimit_theory(cls: type, parents: list[type]) -> panproto.Theory:
     # finally fold in any cls-only fields by colimiting against the
     # immediate spec of cls; the shared ancestor is the accumulated
     # theory we just built
-    cls_theory = panproto.create_theory(build_theory_spec(cls))
+    cls_theory = panproto.create_theory(_spec_payload(build_theory_spec(cls)))
     return panproto.colimit_theories(accumulator, cls_theory, accumulator)
 
 

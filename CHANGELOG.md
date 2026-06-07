@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-06-07
+
+### Added
+
+- ``find_correspondences``, ``best_correspondence``, and the
+  ``Correspondence`` record wrap panproto's hom search
+  (``find_morphisms`` / ``find_best_morphism``). Given two panproto
+  Schemas, the search enumerates structure-preserving vertex maps,
+  scored by alignment quality, with ``anchors`` to pin known pairings
+  and ``monic`` / ``epic`` / ``iso`` to constrain the map's shape. A
+  discovered ``Correspondence.vertex_map`` has exactly the
+  ``dict[str, str]`` shape that
+  ``DependentLens.auto_generate_with_hints`` takes as ``hints``, so
+  the two compose into a discover-then-derive pipeline (documented in
+  the lenses guide). The search is informative on multi-vertex
+  schemas (hand-built protocol schemas, parse-recovered source
+  schemas); the single-vertex schemas didactic builds from Model
+  classes degenerate to the root pairing.
+
+### Changed
+
+- Minimum ``panproto`` version raised from ``0.48.3`` to ``0.52.0``.
+  The bump pulls in, with direct effect on didactic's surface:
+
+  - The hom-search bindings (``find_morphisms``,
+    ``find_best_morphism``, ``TheoryMorphism``, ``SchemaMorphism``,
+    ``FoundMorphism``) that back the new correspondence API.
+  - The ``emit_pretty`` rewrite (grammar-derived token roles, role-pair
+    spacing, structural bracket detection) and the emit-coverage sweep
+    that corpus-verifies the emit fixed-point law
+    (``emit(parse(emit(s))) == emit(s)``), covering every grammar the
+    ``panproto`` wheel ships. This is the engine behind
+    ``didactic.codegen.source.emit_pretty`` and ``Model.emit_as``.
+  - ``get_builtin_protocol`` resolving tree-sitter grammar protocols
+    (``get_builtin_protocol("python")`` succeeds instead of raising
+    ``KeyError``).
+  - ``IdGenerator`` disambiguation of repeated names at the same
+    scope, which unblocks parsing any Python source that uses
+    ``@typing.overload`` through ``didactic.codegen.source.parse``.
+  - Resynced ``_native.pyi`` stubs. didactic's typing follows:
+    ``DependentLens.auto_generate_with_hints`` declares
+    ``hints: dict[str, str]`` (was ``object``), and the
+    ``TheorySpec`` handoff to ``panproto.create_theory`` narrows
+    through a documented boundary cast (a ``TypedDict`` is assignable
+    to ``Mapping[str, object]`` and to no narrower mapping, while the
+    resynced stub takes ``Mapping[str, JsonValue]``).
+
+### Fixed
+
+- ``__version__`` strings match the released distribution version
+  across all four packages. The core ``didactic.api.__version__`` and
+  the three sibling ``__init__`` modules lagged behind their
+  ``pyproject.toml`` versions, so ``didactic version`` under-reported.
+
 ## [0.7.2] - 2026-05-19
 
 ### Changed

@@ -114,3 +114,36 @@ surface (JSON, YAML, or Nickel) and loaded through
 [`from_dsl_nickel`][didactic.api.DependentLens.from_dsl_nickel]
 classmethods. Each loader takes the document source plus the entry
 vertex of the source schema the chain is anchored against.
+
+## Correspondence discovery
+
+When you have two concrete schemas and don't yet know how their
+vertices line up, [find_correspondences][didactic.api.find_correspondences]
+enumerates the structure-preserving vertex maps between them via
+panproto's hom search, scored by alignment quality;
+[best_correspondence][didactic.api.best_correspondence] returns just the
+top match. The discovered
+[Correspondence.vertex_map][didactic.api.Correspondence] feeds
+[DependentLens.auto_generate_with_hints][didactic.api.DependentLens.auto_generate_with_hints]
+directly, giving a discover-then-derive pipeline:
+
+```python
+import didactic.api as dx
+
+best = dx.best_correspondence(src_schema, tgt_schema)
+if best is not None and best.quality >= 0.8:
+    chain = dx.DependentLens.auto_generate_with_hints(
+        src_schema,
+        tgt_schema,
+        protocol,
+        best.vertex_map,
+    )
+```
+
+Known pairings can be pinned with `anchors`; injective, surjective,
+or bijective maps can be required with `monic`, `epic`, and `iso`.
+Note that the schemas didactic builds from Model classes are
+single-vertex (their structure lives in the Theory), so the search is
+informative on multi-vertex schemas: protocol schemas built by hand
+and schemas recovered by
+[didactic.codegen.source.parse][didactic.codegen.source.parse].

@@ -13,8 +13,10 @@ from annotated_types import Ge, Le, MaxLen, MinLen
 from didactic.types._types import TypeNotSupportedError, classify, unwrap_annotated
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from didactic.types._types import TypeForm
-    from didactic.types._typing import FieldValue
+    from didactic.types._typing import FieldValue, JsonValue
 
 
 def test_typing_aliases_importable_at_runtime() -> None:
@@ -649,16 +651,15 @@ def test_panproto_accepts_alias_theory_spec() -> None:
     """panproto's ``create_theory`` accepts the spec with the alias sorts.
 
     Verifies that the closed sum sort + helper sorts + constructor ops
-    deserialise into a real ``panproto.Theory`` without error. The
-    ``Theory.sorts`` attribute is a list of sort dicts at runtime
-    (the stub claims it's a method; treat as data).
+    deserialise into a real ``panproto.Theory`` without error.
     """
     import panproto
 
     from didactic.theory._theory import build_theory_spec
 
     spec = build_theory_spec(_DocWithComponent)
-    theory = panproto.create_theory(cast("dict[str, object]", spec))
-    sort_records = cast("list[dict[str, object]]", theory.sorts)
-    sort_names = {cast("str", record["name"]) for record in sort_records}
+    # a TypedDict is assignable to ``Mapping[str, object]`` and to no
+    # narrower mapping; cast to the shape ``create_theory`` takes
+    theory = panproto.create_theory(cast("Mapping[str, JsonValue]", spec))
+    sort_names = {cast("str", record["name"]) for record in theory.sorts}
     assert "_Component" in sort_names

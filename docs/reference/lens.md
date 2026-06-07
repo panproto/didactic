@@ -9,3 +9,9 @@
 ::: didactic.api.DependentLens
 
 ::: didactic.api.lens
+
+::: didactic.api.Correspondence
+
+::: didactic.api.find_correspondences
+
+::: didactic.api.best_correspondence

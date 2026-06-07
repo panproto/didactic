@@ -54,6 +54,11 @@ from didactic.fields._validators import (
 from didactic.lenses import _testing as testing
 from didactic.lenses._dependent_lens import DependentLens
 from didactic.lenses._lens import Iso, Lens, Mapping, lens
+from didactic.lenses._morphisms import (
+    Correspondence,
+    best_correspondence,
+    find_correspondences,
+)
 from didactic.migrations._diff import classify_change, diff, is_breaking_change
 from didactic.migrations._migrations import (
     load_registry,
@@ -69,7 +74,7 @@ from didactic.types import _types_lib as types
 from didactic.vcs._backref import ModelPool, resolve_backrefs
 from didactic.vcs._repo import Repository
 
-__version__ = "0.7.1"
+__version__ = "0.7.3"
 
 #: Conventional namespace for lens utilities (`dx.lens.identity(...)`,
 #: `dx.lens.Lens`, etc.). The ``lens`` name doubles as a decorator
@@ -81,6 +86,7 @@ __all__ = [
     "Axiom",
     "Backref",
     "BaseModel",
+    "Correspondence",
     "DependentLens",
     "Embed",
     "ExtraPolicy",
@@ -103,6 +109,7 @@ __all__ = [
     "ValidationErrorEntry",
     "__version__",
     "axiom",
+    "best_correspondence",
     "classify_change",
     "codegen",
     "computed",
@@ -110,6 +117,7 @@ __all__ = [
     "diff",
     "embed_schema_uri",
     "field",
+    "find_correspondences",
     "is_breaking_change",
     "lens",
     "load_registry",
