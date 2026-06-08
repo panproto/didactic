@@ -20,7 +20,8 @@ parameter list.
 ## Schema evolution
 
 - [Lens](lens.md): `Lens`, `Iso`, `Mapping`, `DependentLens`,
-  `lens` decorator.
+  `lens` decorator, `Correspondence`, `find_correspondences`,
+  `best_correspondence`.
 - [Migrations](migrations.md): `register_migration`, `migrate`,
   `save_registry`, `load_registry`.
 - [Schema diff](diff.md): `diff`, `classify_change`,

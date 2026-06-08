@@ -19,7 +19,7 @@ contribute submodules under `didactic.<name>`.
 
 ## Install
 
-didactic targets Python 3.14 and panproto 0.43+.
+didactic targets Python 3.14 and panproto 0.52+.
 
 ```sh
 pip install didactic

@@ -35,7 +35,8 @@ schema VCS implementations, and the protocol codecs.
   (Avro, OpenAPI, FHIR, Protobuf, BSON, CDDL, Parquet, ...).
 - `panproto.AstParserRegistry`: tree-sitter-backed parsers for many
   programming languages, with an emitter that walks `grammar.json`
-  productions to produce syntactically valid source de novo.
+  productions to produce source de novo, round-trip-checked against
+  each grammar's upstream corpus in panproto's test suite.
 - Schema diff, breaking-change classification, and migration
   synthesis.
 

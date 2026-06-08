@@ -146,7 +146,7 @@ class DependentLens:
         src_schema: panproto.Schema,
         tgt_schema: panproto.Schema,
         protocol: panproto.Protocol,
-        hints: object,
+        hints: dict[str, str],
         *,
         stringency: str | None = None,
     ) -> DependentLens:
@@ -161,8 +161,10 @@ class DependentLens:
         protocol
             The panproto protocol both schemas conform to.
         hints
-            Vertex-correspondence hints. Their exact shape is
-            panproto-defined.
+            Vertex-correspondence hints mapping source-schema vertex
+            IDs to target-schema vertex IDs. A discovered
+            [Correspondence][didactic.api.Correspondence] supplies this
+            shape via its ``vertex_map``.
         stringency
             Optional stringency hint. ``None`` uses panproto's default.
 

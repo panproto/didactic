@@ -4,8 +4,11 @@ For every tree-sitter grammar panproto bundles, didactic can:
 
 - **De-novo emit** a [Model][didactic.api.Model] class as fresh source via
   [emit_pretty][didactic.codegen.source.emit_pretty]. Walks the
-  grammar's production rules; output is syntactically valid for any
-  grammar that ships a ``grammar.json``.
+  grammar's production rules; spacing and indentation derive from
+  grammar-classified token roles. Emit round-trips are checked
+  against each grammar's upstream corpus in panproto's test suite.
+  Use [available_targets][didactic.codegen.source.available_targets]
+  to enumerate what the running build supports.
 - **Edit-pipeline emit**: parse real source, transform the schema,
   re-emit the bytes. Uses [emit][didactic.codegen.source.emit].
 - **Parse** source bytes into a panproto Schema for inspection.
