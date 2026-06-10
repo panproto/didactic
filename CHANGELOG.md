@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-06-10
+
+### Changed
+
+- Minimum ``panproto`` version raised from ``0.52.0`` to ``0.52.1``.
+  The release resyncs the ``_native.pyi`` stubs to the runtime
+  (``diff_and_classify`` takes a third ``protocol`` argument;
+  ``ProtolensChain.instantiate`` takes ``(schema, protocol)``;
+  ``Instance.root`` / ``node_count`` / ``arc_count`` are ``int``
+  properties and ``Instance.validate()`` returns the error list).
+  It also tightens by-construction source emit for Rust and Julia
+  (line comments no longer absorb the following items, opaque token
+  trees emit verbatim, Julia parenthesised macro calls keep their
+  arguments), which flows through
+  ``didactic.codegen.source.emit_pretty`` and ``Model.emit_as``.
+
+### Removed
+
+- The two boundary casts that worked around the pre-0.52.1 stub drift
+  are gone: ``classify_change`` calls ``panproto.diff_and_classify``
+  with its three runtime arguments directly, and
+  ``DependentLens.instantiate`` passes the ``Protocol`` through
+  without re-casting it to ``Schema``. Behaviour is unchanged; the
+  call sites now type-check against the corrected stubs.
+
 ## [0.7.3] - 2026-06-07
 
 ### Added
