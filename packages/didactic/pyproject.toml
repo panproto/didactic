@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "didactic"
-version = "0.7.3"
+version = "0.7.4"
 description = "Pydantic-class API on top of panproto: GATs, lenses, and VCS."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -22,7 +22,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "panproto>=0.52.0",
+    "panproto>=0.52.1",
     "annotated-types>=0.7",
 ]
 

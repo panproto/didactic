@@ -18,11 +18,9 @@ panproto.diff_schemas : the runtime call.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    import panproto
-
     from didactic.models._model import Model
     from didactic.types._typing import JsonObject
 
@@ -110,24 +108,11 @@ def classify_change(old: type[Model], new: type[Model]) -> JsonObject:
         obj_kinds=["object"],
     )
 
-    # ``panproto.diff_and_classify`` accepts a third positional ``protocol``
-    # argument at runtime; the upstream stub still lists only two. Cast
-    # to a Protocol that exposes the runtime arity and return shape.
-    class _CompatReportLike(Protocol):
-        def to_dict(self) -> JsonObject: ...
-
-    class _DiffAndClassifyLike(Protocol):
-        def __call__(
-            self,
-            old: panproto.Schema,
-            new: panproto.Schema,
-            protocol: panproto.Protocol,
-            /,
-        ) -> _CompatReportLike: ...
-
-    diff_and_classify = cast("_DiffAndClassifyLike", panproto.diff_and_classify)
-    compat = diff_and_classify(old_schema, new_schema, protocol)
-    return compat.to_dict()
+    compat = panproto.diff_and_classify(old_schema, new_schema, protocol)
+    # panproto's ``to_dict`` is typed with panproto's own recursive
+    # ``JsonValue`` alias; narrow to didactic's structurally-identical
+    # ``JsonObject`` at the boundary (the same bridge ``diff`` uses).
+    return cast("JsonObject", compat.to_dict())
 
 
 def is_breaking_change(old: type[Model], new: type[Model]) -> bool:
