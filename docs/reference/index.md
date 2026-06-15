@@ -26,8 +26,10 @@ parameter list.
   `save_registry`, `load_registry`.
 - [Schema diff](diff.md): `diff`, `classify_change`,
   `is_breaking_change`.
-- [Synthesis](synthesis.md): `synthesise_migration`,
+- [Migration synthesis](synthesis.md): `synthesise_migration`,
   `SynthesisResult`.
+- [Model synthesis](model-synthesis.md): `model_from_spec`,
+  `models_from_specs`, `model_from_theory`.
 
 ## Theory and fingerprints
 

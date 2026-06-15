@@ -32,7 +32,7 @@ sub-package (``didactic.api``, ``didactic.pydantic``,
 resolve cross-distribution imports without a ``pkgutil`` workaround.
 """
 
-from didactic import codegen
+from didactic import codegen, synthesis
 from didactic._self_describing import (
     FingerprintRegistry,
     embed_schema_uri,
@@ -70,6 +70,11 @@ from didactic.migrations._synthesis import SynthesisResult, synthesise_migration
 from didactic.models._config import DEFAULT_CONFIG, ExtraPolicy, ModelConfig
 from didactic.models._model import BaseModel, Model
 from didactic.models._root import RootModel, TypeAdapter
+from didactic.synthesis._synthesis import (
+    model_from_spec,
+    model_from_theory,
+    models_from_specs,
+)
 from didactic.types import _types_lib as types
 from didactic.vcs._backref import ModelPool, resolve_backrefs
 from didactic.vcs._repo import Repository
@@ -122,11 +127,15 @@ __all__ = [
     "lens",
     "load_registry",
     "migrate",
+    "model_from_spec",
+    "model_from_theory",
     "model_validator",
+    "models_from_specs",
     "register_migration",
     "resolve_backrefs",
     "save_registry",
     "schema_uri",
+    "synthesis",
     "synthesise_migration",
     "testing",
     "types",
