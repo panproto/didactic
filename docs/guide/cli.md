@@ -110,6 +110,6 @@ Prints didactic's version followed by panproto's:
 
 ```bash
 didactic version
-# didactic 0.7.5
-# panproto 0.52.1
+# didactic 0.7.6
+# panproto 0.53.0
 ```
