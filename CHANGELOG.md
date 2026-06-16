@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The inbound synthesiser (``didactic.synthesis``: ``model_from_spec``,
+  ``models_from_specs``, ``model_from_theory``) reconstructs closed sum
+  sorts. A ``dx.TaggedUnion`` field rebuilds into a union root with one
+  variant subclass per constructor (keyed by the discriminator value
+  recovered from the constructor name), and a Model-ref recursive alias
+  rebuilds into an equivalent ``type`` alias. A model carrying either
+  shape now round-trips through the synthesiser at the Theory-spec
+  level. Variant and arm Model payloads resolve through the shared
+  ``registry`` (so an edge elsewhere binds the same class), and
+  ``models_from_specs`` orders sum-arm dependencies ahead of their
+  dependents so a forward-referenced arm resolves to the real class
+  rather than a fieldless stub. ([#45])
+
+### Notes
+
+- Three lossiness limitations of the synthesiser (scalar value kinds
+  collapsing to ``str``, ``Ref`` indistinguishable from ``Embed``, and
+  per-field defaults / metadata being absent) are inherent to the GAT
+  theory vocabulary rather than the synthesiser: a panproto ``Operation``
+  carries no containment marker or metadata slot, and ``ValueKind`` has
+  no temporal / decimal / uuid variant. These are tracked upstream for a
+  representation didactic can adopt without smuggling private data
+  through ignored spec keys.
+
+[#45]: https://github.com/panproto/didactic/issues/45
+
 ## [0.7.4] - 2026-06-10
 
 ### Changed

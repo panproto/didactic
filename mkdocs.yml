@@ -113,7 +113,8 @@ nav:
     - Lens: reference/lens.md
     - Migrations: reference/migrations.md
     - Schema diff: reference/diff.md
-    - Synthesis: reference/synthesis.md
+    - Migration synthesis: reference/synthesis.md
+    - Model synthesis: reference/model-synthesis.md
     - Repository: reference/repository.md
     - Code generation: reference/codegen.md
     - Self-describing: reference/self-describing.md
