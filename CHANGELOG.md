@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-06-16
+
+### Changed
+
+- Minimum ``panproto`` version raised from ``0.52.1`` to ``0.53.0``.
+  The release adds a Python entry point for lexicon parsing
+  (``parse_atproto_lexicon`` / ``parse_schema_document`` /
+  ``Schema.from_atproto_lexicon``) and the Schema-to-Theory bridge
+  (``theory_of`` / ``Schema.theory``), and bumps its build to pyo3
+  0.29 for two ``RUSTSEC`` advisories. The GAT theory vocabulary
+  (``ValueKind`` / ``Operation`` / ``Sort``) is unchanged, so
+  didactic's forward and inbound theory paths, including closed-sum-sort
+  synthesis, are unaffected.
+
 ## [0.7.5] - 2026-06-16
 
 ### Added
