@@ -61,11 +61,18 @@ class CommittedDataset:
         content-addressed JSON).
     record_count
         Number of records panproto counted in ``data`` at commit time.
+    key
+        Identifier recorded for the dataset: the key passed to
+        [add_data][didactic.api.Repository.add_data], or the source
+        path when none was given. A downstream that versions one record
+        per dataset uses this to map a committed dataset back to its own
+        key. ``None`` only if panproto recorded no identifier.
     """
 
     schema_id: str
     data: bytes
     record_count: int
+    key: str | None = None
 
 
 class Repository:
@@ -305,7 +312,7 @@ class Repository:
         # ``Schema`` arm of the union is left.
         self._inner.add(cast("panproto.Schema", target))
 
-    def add_data(self, path: str | PathLike[str]) -> None:
+    def add_data(self, path: str | PathLike[str], *, key: str | None = None) -> None:
         """Stage a data file for the next commit.
 
         Reads the file at ``path`` and stages its contents as a dataset
@@ -322,6 +329,13 @@ class Repository:
             Filesystem path to the data file to stage. The file is read
             immediately and its contents are captured into the
             repository's object store.
+        key
+            Identifier to record for the dataset, surfaced as
+            [CommittedDataset.key][didactic.api.CommittedDataset]. A
+            downstream that versions one record per dataset passes its
+            own key (for example an AT-URI) so it can map the committed
+            dataset back. When omitted, the dataset's key defaults to
+            ``path``.
 
         Notes
         -----
@@ -335,7 +349,7 @@ class Repository:
             If no schema is staged and the repository has no commits
             yet, so the dataset has no schema to bind to.
         """
-        self._inner.add_data(str(path))
+        self._inner.add_data(str(path), key)
 
     def commit(
         self,
@@ -506,7 +520,7 @@ def schema_from_model(cls: type[Model]) -> panproto.Schema:
     return builder.build()
 
 
-def _committed_dataset(ds: dict[str, str | bytes | int]) -> CommittedDataset:
+def _committed_dataset(ds: dict[str, str | bytes | int | None]) -> CommittedDataset:
     """Narrow one panproto dataset mapping to a ``CommittedDataset``.
 
     panproto types each committed dataset as a mapping with union-typed
@@ -516,13 +530,16 @@ def _committed_dataset(ds: dict[str, str | bytes | int]) -> CommittedDataset:
     schema_id = ds["schema_id"]
     data = ds["data"]
     record_count = ds["record_count"]
+    key = ds["key"]
     assert isinstance(schema_id, str)
     assert isinstance(data, bytes)
     assert isinstance(record_count, int)
+    assert key is None or isinstance(key, str)
     return CommittedDataset(
         schema_id=schema_id,
         data=data,
         record_count=record_count,
+        key=key,
     )
 
 

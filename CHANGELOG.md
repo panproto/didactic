@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-17
+
+### Added
+
+- ``CommittedDataset`` carries a ``key``: the identifier recorded for
+  the dataset, surfaced by ``data_at``. ``Repository.add_data`` takes an
+  optional ``key`` so a downstream that versions one record per dataset
+  can tag each with its own identifier (for example an AT-URI) and map a
+  committed dataset back to it; when omitted the key defaults to the
+  source path. This completes the committed-data round trip and lets a
+  downstream build a per-record, revision-to-revision diff from
+  ``data_at`` alone. ([#54])
+
+### Changed
+
+- Minimum ``panproto`` version raised from ``0.54.0`` to ``0.56.0``,
+  which records the per-dataset key behind ``add_data`` / ``data_at``
+  and lets a commit carry staged data forward without a schema change
+  (a data-only commit no longer raises ``nothing staged`` while
+  ``has_staged`` reports data staged).
+
+[#54]: https://github.com/panproto/didactic/issues/54
+
 ## [0.8.0] - 2026-06-17
 
 ### Added
