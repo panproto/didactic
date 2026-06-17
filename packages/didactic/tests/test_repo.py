@@ -192,7 +192,7 @@ def test_create_annotated_tag_round_trips(fresh_repo_path: Path) -> None:
     """
     repo, cid = _committed_repo(fresh_repo_path)
 
-    repo.create_annotated_tag(
+    tag_id = repo.create_annotated_tag(
         "v1",
         cid,
         message="release one",
@@ -200,12 +200,12 @@ def test_create_annotated_tag_round_trips(fresh_repo_path: Path) -> None:
     )
 
     tags = dict(repo.list_tags())
-    assert "v1" in tags
-    # the tag ref resolves to the annotated-tag object, not the commit
-    assert tags["v1"] != cid
+    # the tag ref resolves to the returned annotated-tag object, not the commit
+    assert tags["v1"] == tag_id
+    assert tag_id != cid
 
     inner = panproto.Repository.open(str(fresh_repo_path))
-    annotated = inner.read_annotated_tag(tags["v1"])
+    annotated = inner.read_annotated_tag(tag_id)
     assert annotated["target"] == cid
     assert annotated["message"] == "release one"
     assert annotated["tagger"] == "Tagger <tag@example.com>"
@@ -224,6 +224,56 @@ def test_delete_missing_tag_raises(fresh_repo_path: Path) -> None:
 
     with pytest.raises(panproto.VcsError):
         repo.delete_tag("nope")
+
+
+# -- committed data ---------------------------------------------------
+
+
+_RECORDS = b'[{"id": "a"}, {"id": "b"}]'
+
+
+def _commit_schema_and_data(path: Path, records: bytes) -> str:
+    """Commit a schema plus a staged data file through a panproto handle.
+
+    The wrapper does not expose ``add_data``, so the producing side runs
+    on a directly opened panproto handle; the test then reads the result
+    back through the public ``data_at``.
+    """
+    inner = panproto.Repository.init(str(path))
+    inner.add(_build_minimal_schema())
+    data_file = path / "records.json"
+    data_file.write_bytes(records)
+    inner.add_data(str(data_file))
+    return inner.commit("schema+data", "Test <test@example.com>")
+
+
+def test_data_at_returns_committed_dataset(fresh_repo_path: Path) -> None:
+    cid = _commit_schema_and_data(fresh_repo_path, _RECORDS)
+
+    repo = dx.Repository.open(fresh_repo_path)
+    datasets = repo.data_at("HEAD")
+    assert len(datasets) == 1
+    (dataset,) = datasets
+    assert isinstance(dataset, dx.CommittedDataset)
+    assert dataset.data == _RECORDS
+    assert dataset.record_count == 2
+    assert dataset.schema_id  # a non-empty object id
+
+    # the same revision is readable by commit id and by branch name
+    assert repo.data_at(cid) == datasets
+    assert repo.data_at("main") == datasets
+
+
+def test_data_at_is_empty_without_committed_data(fresh_repo_path: Path) -> None:
+    """A revision that committed only a schema has no datasets."""
+    repo, cid = _committed_repo(fresh_repo_path)
+    assert repo.data_at(cid) == []
+
+
+def test_data_at_unknown_ref_raises(fresh_repo_path: Path) -> None:
+    repo, _ = _committed_repo(fresh_repo_path)
+    with pytest.raises(panproto.VcsError):
+        repo.data_at("nope")
 
 
 def test_add_accepts_model_class(fresh_repo_path: Path) -> None:

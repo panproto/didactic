@@ -30,6 +30,7 @@ panproto.Repository : the wrapped runtime type.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -39,6 +40,32 @@ if TYPE_CHECKING:
 
     from didactic.models._model import Model
     from didactic.types._typing import JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedDataset:
+    """A dataset as recorded at a committed revision.
+
+    Returned by [data_at][didactic.api.Repository.data_at], one per
+    dataset committed at the requested revision. The wrapper exposes a
+    typed value rather than panproto's raw mapping so the public surface
+    does not leak the binding's dict shape.
+
+    Parameters
+    ----------
+    schema_id
+        Object id of the schema the dataset was validated against when
+        it was committed.
+    data
+        The raw committed bytes, exactly as staged (typically
+        content-addressed JSON).
+    record_count
+        Number of records panproto counted in ``data`` at commit time.
+    """
+
+    schema_id: str
+    data: bytes
+    record_count: int
 
 
 class Repository:
@@ -221,6 +248,36 @@ class Repository:
             raise panproto.VcsError(msg)
         return result
 
+    def data_at(self, ref: str) -> list[CommittedDataset]:
+        """Read the datasets committed at ``ref``.
+
+        A read-only accessor for committed content: it resolves
+        ``ref``, loads the datasets recorded at that revision, and
+        returns their bytes, leaving HEAD and the working tree
+        untouched. This is the data-side counterpart to panproto's
+        committed-schema lookup, so a downstream can reconstruct the
+        record set at an arbitrary revision, for example to diff two
+        revisions, without checking it out.
+
+        Parameters
+        ----------
+        ref
+            A branch name, tag name, ``HEAD``, or commit id naming the
+            revision to read.
+
+        Returns
+        -------
+        list of CommittedDataset
+            One entry per dataset committed at ``ref``, in panproto's
+            recorded order. Empty when the revision committed no data.
+
+        Raises
+        ------
+        panproto.VcsError
+            If ``ref`` does not resolve to a revision.
+        """
+        return [_committed_dataset(ds) for ds in self._inner.data_at(ref)]
+
     # mutation ------------------------------------------------------
 
     def add(self, target: panproto.Schema | type) -> None:
@@ -329,15 +386,13 @@ class Repository:
         *,
         message: str,
         tagger: str,
-    ) -> None:
+    ) -> str:
         """Create an annotated tag ``name`` pointing at ``target``.
 
         An annotated tag is a first-class object recording a tagger,
         a timestamp, and a message, unlike a lightweight tag which is
         only a named pointer. The tag ref resolves to the annotated-tag
-        object rather than to ``target`` directly; that object id is
-        available through
-        [list_tags][didactic.api.Repository.list_tags].
+        object rather than to ``target`` directly.
 
         Parameters
         ----------
@@ -353,15 +408,19 @@ class Repository:
             The tagger identity. Free-form string; the conventional
             shape is ``"Name <email>"``.
 
+        Returns
+        -------
+        str
+            Object id of the created annotated-tag object, the id the
+            tag ref resolves to.
+
         Raises
         ------
         panproto.VcsError
             If a tag ``name`` already exists or panproto rejects the
             tag.
         """
-        # positional call: panproto's runtime arg order is
-        # ``(name, commit_id, tagger, message)``.
-        self._inner.create_annotated_tag(name, target, tagger, message)
+        return self._inner.create_annotated_tag(name, target, tagger, message)
 
     def delete_tag(self, name: str) -> None:
         """Delete the tag ``name``.
@@ -415,6 +474,27 @@ def schema_from_model(cls: type[Model]) -> panproto.Schema:
     return builder.build()
 
 
+def _committed_dataset(ds: dict[str, str | bytes | int]) -> CommittedDataset:
+    """Narrow one panproto dataset mapping to a ``CommittedDataset``.
+
+    panproto types each committed dataset as a mapping with union-typed
+    values; the keys carry fixed types, so each is narrowed at the
+    boundary.
+    """
+    schema_id = ds["schema_id"]
+    data = ds["data"]
+    record_count = ds["record_count"]
+    assert isinstance(schema_id, str)
+    assert isinstance(data, bytes)
+    assert isinstance(record_count, int)
+    return CommittedDataset(
+        schema_id=schema_id,
+        data=data,
+        record_count=record_count,
+    )
+
+
 __all__ = [
+    "CommittedDataset",
     "Repository",
 ]

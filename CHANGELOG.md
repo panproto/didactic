@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-06-17
+
+### Added
+
+- ``Repository.data_at(ref)`` reads the datasets committed at a
+  revision without touching HEAD or the working tree, returning one
+  ``CommittedDataset`` (``schema_id`` / ``data`` / ``record_count``)
+  per committed dataset. This is the data-side counterpart to
+  panproto's committed-schema lookup, so a downstream can reconstruct
+  the record set at an arbitrary revision (for example to diff two
+  revisions) without checking it out. ``CommittedDataset`` is exported
+  from ``didactic.api``. ([#50])
+
+### Changed
+
+- Minimum ``panproto`` version raised from ``0.53.0`` to ``0.54.0``,
+  which adds the ``data_at`` committed-data accessor behind the new
+  ``Repository.data_at`` and corrects the ``create_annotated_tag``
+  binding stub (return type and ``message`` / ``author`` argument
+  order).
+- ``Repository.create_annotated_tag`` returns the created
+  annotated-tag object id (the id the tag ref resolves to). It
+  previously returned ``None`` to sidestep the panproto stub, now
+  fixed upstream.
+
+### Fixed
+
+- The runtime ``__version__`` constant in each distribution
+  (``didactic.api``, ``didactic.pydantic``, ``didactic.settings``,
+  ``didactic.fastapi``) is bumped in lockstep with the packaging
+  version; the four had drifted to ``0.7.6``. A ``test_version`` guard
+  now fails if a runtime constant and its packaged version diverge.
+
+[#50]: https://github.com/panproto/didactic/issues/50
+
 ## [0.7.7] - 2026-06-16
 
 ### Added

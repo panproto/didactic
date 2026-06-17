@@ -77,9 +77,9 @@ from didactic.synthesis._synthesis import (
 )
 from didactic.types import _types_lib as types
 from didactic.vcs._backref import ModelPool, resolve_backrefs
-from didactic.vcs._repo import Repository
+from didactic.vcs._repo import CommittedDataset, Repository
 
-__version__ = "0.7.6"
+__version__ = "0.7.8"
 
 #: Conventional namespace for lens utilities (`dx.lens.identity(...)`,
 #: `dx.lens.Lens`, etc.). The ``lens`` name doubles as a decorator
@@ -91,6 +91,7 @@ __all__ = [
     "Axiom",
     "Backref",
     "BaseModel",
+    "CommittedDataset",
     "Correspondence",
     "DependentLens",
     "Embed",
