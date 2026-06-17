@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-06-16
+
+### Added
+
+- ``Repository`` exposes tag management: ``create_tag(name, target, *,
+  force=False)`` for a lightweight tag, ``create_annotated_tag(name,
+  target, *, message, tagger)`` for an annotated-tag object, and
+  ``delete_tag(name)``. The three are thin pass-throughs to the
+  underlying panproto handle, mirroring how ``commit``,
+  ``create_branch``, and ``list_tags`` are already wrapped, so a
+  downstream that tags a revision through the documented surface no
+  longer has to reach the private inner handle. ([#49])
+
+[#49]: https://github.com/panproto/didactic/issues/49
+
 ## [0.7.6] - 2026-06-16
 
 ### Changed
