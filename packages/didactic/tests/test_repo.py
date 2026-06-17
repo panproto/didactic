@@ -285,6 +285,59 @@ def test_add_data_without_schema_context_raises(fresh_repo_path: Path) -> None:
         repo.add_data(data_file)
 
 
+def test_add_data_records_explicit_key(fresh_repo_path: Path) -> None:
+    """A key passed to ``add_data`` is surfaced on the committed dataset."""
+    repo = dx.Repository.init(fresh_repo_path)
+    repo.add(_build_minimal_schema())
+    data_file = fresh_repo_path / "records.json"
+    data_file.write_bytes(_RECORDS)
+    repo.add_data(data_file, key="at://did:plc:abc/app.bsky.feed.post/1")
+    repo.commit("schema+data", author="Test <test@example.com>")
+
+    (dataset,) = repo.data_at("HEAD")
+    assert dataset.key == "at://did:plc:abc/app.bsky.feed.post/1"
+
+
+def test_add_data_key_defaults_to_path(fresh_repo_path: Path) -> None:
+    """With no key, the dataset key falls back to the source path."""
+    repo = dx.Repository.init(fresh_repo_path)
+    repo.add(_build_minimal_schema())
+    data_file = fresh_repo_path / "records.json"
+    data_file.write_bytes(_RECORDS)
+    repo.add_data(data_file)
+    repo.commit("schema+data", author="Test <test@example.com>")
+
+    (dataset,) = repo.data_at("HEAD")
+    assert dataset.key == str(data_file)
+
+
+def test_data_only_commit_records_new_data(fresh_repo_path: Path) -> None:
+    """A data-only change commits and is readable at the new revision.
+
+    panproto lets a commit carry staged data forward without a schema
+    change, so ``has_staged`` and ``commit`` agree on staged data.
+    """
+    repo = dx.Repository.init(fresh_repo_path)
+    repo.add(_build_minimal_schema())
+    first_file = fresh_repo_path / "a.json"
+    first_file.write_bytes(b'[{"id": "a"}]')
+    repo.add_data(first_file, key="rec-a")
+    first = repo.commit("schema+data", author="Test <test@example.com>")
+
+    # stage only data, with no schema change
+    second_file = fresh_repo_path / "b.json"
+    second_file.write_bytes(b'[{"id": "b"}]')
+    repo.add_data(second_file, key="rec-b")
+    assert repo.has_staged() is True
+
+    second = repo.commit("data only", author="Test <test@example.com>")
+    assert second != first
+
+    (dataset,) = repo.data_at(second)
+    assert dataset.key == "rec-b"
+    assert dataset.data == b'[{"id": "b"}]'
+
+
 def test_data_at_is_empty_without_committed_data(fresh_repo_path: Path) -> None:
     """A revision that committed only a schema has no datasets."""
     repo, cid = _committed_repo(fresh_repo_path)
