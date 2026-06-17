@@ -12,8 +12,8 @@ Surface
 The wrapper covers initialisation, staging (either a panproto
 ``Schema`` or a [Model][didactic.api.Model] subclass), committing, the
 read-only introspection accessors (``head``, ``log``, ``working_dir``,
-branch listing), and ref / branch operations. Staging a Model class
-synthesises a single-vertex schema via
+branch listing), and ref / branch / tag operations. Staging a Model
+class synthesises a single-vertex schema via
 ``panproto.Protocol.from_theories`` over the Model's Theory.
 
 Notes
@@ -287,6 +287,96 @@ class Repository:
     def checkout_branch(self, name: str) -> None:
         """Switch HEAD to branch ``name``."""
         self._inner.checkout_branch(name)
+
+    # tags ----------------------------------------------------------
+
+    def create_tag(self, name: str, target: str, *, force: bool = False) -> None:
+        """Create a lightweight tag ``name`` pointing at ``target``.
+
+        A lightweight tag is a named pointer to a commit, carrying no
+        message or tagger. Use
+        [create_annotated_tag][didactic.api.Repository.create_annotated_tag]
+        for a tag object that records who tagged what, when, and why.
+
+        Parameters
+        ----------
+        name
+            The tag name.
+        target
+            The commit id to tag, as returned by
+            [commit][didactic.api.Repository.commit],
+            [head][didactic.api.Repository.head], or
+            [resolve_ref][didactic.api.Repository.resolve_ref].
+        force
+            If ``True``, overwrite an existing tag of the same name.
+            Defaults to ``False``, under which an existing ``name``
+            is an error.
+
+        Raises
+        ------
+        panproto.VcsError
+            If a tag ``name`` already exists and ``force`` is ``False``.
+        """
+        if force:
+            self._inner.create_tag_force(name, target)
+        else:
+            self._inner.create_tag(name, target)
+
+    def create_annotated_tag(
+        self,
+        name: str,
+        target: str,
+        *,
+        message: str,
+        tagger: str,
+    ) -> None:
+        """Create an annotated tag ``name`` pointing at ``target``.
+
+        An annotated tag is a first-class object recording a tagger,
+        a timestamp, and a message, unlike a lightweight tag which is
+        only a named pointer. The tag ref resolves to the annotated-tag
+        object rather than to ``target`` directly; that object id is
+        available through
+        [list_tags][didactic.api.Repository.list_tags].
+
+        Parameters
+        ----------
+        name
+            The tag name.
+        target
+            The commit id to tag (see
+            [create_tag][didactic.api.Repository.create_tag] for the
+            accepted forms).
+        message
+            The tag message.
+        tagger
+            The tagger identity. Free-form string; the conventional
+            shape is ``"Name <email>"``.
+
+        Raises
+        ------
+        panproto.VcsError
+            If a tag ``name`` already exists or panproto rejects the
+            tag.
+        """
+        # positional call: panproto's runtime arg order is
+        # ``(name, commit_id, tagger, message)``.
+        self._inner.create_annotated_tag(name, target, tagger, message)
+
+    def delete_tag(self, name: str) -> None:
+        """Delete the tag ``name``.
+
+        Parameters
+        ----------
+        name
+            The tag to delete.
+
+        Raises
+        ------
+        panproto.VcsError
+            If no tag ``name`` exists.
+        """
+        self._inner.delete_tag(name)
 
     # representation ------------------------------------------------
 

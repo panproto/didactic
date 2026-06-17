@@ -86,15 +86,18 @@ def test_fresh_repo_has_no_branches_or_tags(fresh_repo_path: Path) -> None:
 # -- staging and committing -------------------------------------------
 
 
-def _build_minimal_schema() -> panproto.Schema:
+def _build_minimal_schema(vertex: str = "ping") -> panproto.Schema:
     """Construct a minimal panproto schema for staging tests.
 
     A schema with no vertices is rejected by the validator, so we add
     a single ``string`` vertex to satisfy the protocol's edge rules.
+    Passing a distinct ``vertex`` name yields a schema that differs from
+    the default, which a second commit needs to avoid panproto's
+    ``"no changes detected"`` rejection.
     """
     proto = panproto.get_builtin_protocol("openapi")
     builder = proto.schema()
-    builder.vertex("ping", "string")
+    builder.vertex(vertex, "string")
     return builder.build()
 
 
@@ -137,6 +140,90 @@ def test_branch_creation_and_checkout(fresh_repo_path: Path) -> None:
 
     repo.checkout_branch("feature")
     assert repo.resolve_ref("HEAD") == cid
+
+
+# -- tags -------------------------------------------------------------
+
+
+def _committed_repo(path: Path) -> tuple[dx.Repository, str]:
+    """Initialise a repo with a single commit; return it and the commit id."""
+    repo = dx.Repository.init(path)
+    repo.add(_build_minimal_schema())
+    cid = repo.commit("first", author="Test <test@example.com>")
+    return repo, cid
+
+
+def test_create_tag_lists_the_tag(fresh_repo_path: Path) -> None:
+    repo, cid = _committed_repo(fresh_repo_path)
+
+    repo.create_tag("v1", cid)
+    tag_names = {name for name, _ in repo.list_tags()}
+    assert "v1" in tag_names
+    assert repo.resolve_ref("v1") == cid
+
+
+def test_create_tag_duplicate_raises(fresh_repo_path: Path) -> None:
+    repo, cid = _committed_repo(fresh_repo_path)
+    repo.create_tag("v1", cid)
+
+    with pytest.raises(panproto.VcsError):
+        repo.create_tag("v1", cid)
+
+
+def test_create_tag_force_overwrites(fresh_repo_path: Path) -> None:
+    """``force=True`` replaces an existing tag instead of raising."""
+    repo, cid = _committed_repo(fresh_repo_path)
+    repo.create_tag("v1", cid)
+
+    repo.add(_build_minimal_schema("pong"))
+    second = repo.commit("second", author="Test <test@example.com>")
+
+    repo.create_tag("v1", second, force=True)
+    assert repo.resolve_ref("v1") == second
+
+
+def test_create_annotated_tag_round_trips(fresh_repo_path: Path) -> None:
+    """An annotated tag records its tagger and message.
+
+    The wrapper does not expose reading annotated-tag objects, so the
+    round trip is checked through a separately opened panproto handle:
+    this confirms the wrapper forwards ``tagger`` and ``message`` in
+    panproto's expected order rather than transposed.
+    """
+    repo, cid = _committed_repo(fresh_repo_path)
+
+    repo.create_annotated_tag(
+        "v1",
+        cid,
+        message="release one",
+        tagger="Tagger <tag@example.com>",
+    )
+
+    tags = dict(repo.list_tags())
+    assert "v1" in tags
+    # the tag ref resolves to the annotated-tag object, not the commit
+    assert tags["v1"] != cid
+
+    inner = panproto.Repository.open(str(fresh_repo_path))
+    annotated = inner.read_annotated_tag(tags["v1"])
+    assert annotated["target"] == cid
+    assert annotated["message"] == "release one"
+    assert annotated["tagger"] == "Tagger <tag@example.com>"
+
+
+def test_delete_tag_removes_it(fresh_repo_path: Path) -> None:
+    repo, cid = _committed_repo(fresh_repo_path)
+    repo.create_tag("v1", cid)
+
+    repo.delete_tag("v1")
+    assert repo.list_tags() == []
+
+
+def test_delete_missing_tag_raises(fresh_repo_path: Path) -> None:
+    repo, _ = _committed_repo(fresh_repo_path)
+
+    with pytest.raises(panproto.VcsError):
+        repo.delete_tag("nope")
 
 
 def test_add_accepts_model_class(fresh_repo_path: Path) -> None:
