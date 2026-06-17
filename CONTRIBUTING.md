@@ -110,7 +110,11 @@ import didactic.api as dx
 All four distributions are published to PyPI from a single tag push.
 
 1. Bump the version in every package's `pyproject.toml` to the same
-   value (the four distributions ship in lockstep).
+   value (the four distributions ship in lockstep), and the matching
+   runtime `__version__` constant in each distribution's top module
+   (`didactic.api`, `didactic.pydantic`, `didactic.settings`,
+   `didactic.fastapi`). `test_version` fails if the two fall out of
+   step.
 2. Update `CHANGELOG.md` with the new version and date.
 3. Commit the version bump on `main`.
 4. Tag the commit with `vX.Y.Z` and push:
