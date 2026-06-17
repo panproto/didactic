@@ -305,6 +305,38 @@ class Repository:
         # ``Schema`` arm of the union is left.
         self._inner.add(cast("panproto.Schema", target))
 
+    def add_data(self, path: str | PathLike[str]) -> None:
+        """Stage a data file for the next commit.
+
+        Reads the file at ``path`` and stages its contents as a dataset
+        bound to the staged schema, or to HEAD's schema when no schema
+        is staged. The staged data is flushed by the next
+        [commit][didactic.api.Repository.commit] and is then readable at
+        that revision through
+        [data_at][didactic.api.Repository.data_at]. This is the
+        write-side counterpart to ``data_at``.
+
+        Parameters
+        ----------
+        path
+            Filesystem path to the data file to stage. The file is read
+            immediately and its contents are captured into the
+            repository's object store.
+
+        Notes
+        -----
+        Staging is additive: like [add][didactic.api.Repository.add],
+        repeated calls accumulate in the index until a commit flushes
+        it.
+
+        Raises
+        ------
+        panproto.VcsError
+            If no schema is staged and the repository has no commits
+            yet, so the dataset has no schema to bind to.
+        """
+        self._inner.add_data(str(path))
+
     def commit(
         self,
         message: str,

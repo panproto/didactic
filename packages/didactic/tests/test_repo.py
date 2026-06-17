@@ -233,18 +233,13 @@ _RECORDS = b'[{"id": "a"}, {"id": "b"}]'
 
 
 def _commit_schema_and_data(path: Path, records: bytes) -> str:
-    """Commit a schema plus a staged data file through a panproto handle.
-
-    The wrapper does not expose ``add_data``, so the producing side runs
-    on a directly opened panproto handle; the test then reads the result
-    back through the public ``data_at``.
-    """
-    inner = panproto.Repository.init(str(path))
-    inner.add(_build_minimal_schema())
+    """Commit a schema plus a staged data file through the public surface."""
+    repo = dx.Repository.init(path)
+    repo.add(_build_minimal_schema())
     data_file = path / "records.json"
     data_file.write_bytes(records)
-    inner.add_data(str(data_file))
-    return inner.commit("schema+data", "Test <test@example.com>")
+    repo.add_data(data_file)
+    return repo.commit("schema+data", author="Test <test@example.com>")
 
 
 def test_data_at_returns_committed_dataset(fresh_repo_path: Path) -> None:
@@ -262,6 +257,32 @@ def test_data_at_returns_committed_dataset(fresh_repo_path: Path) -> None:
     # the same revision is readable by commit id and by branch name
     assert repo.data_at(cid) == datasets
     assert repo.data_at("main") == datasets
+
+
+def test_add_data_stages_then_round_trips(fresh_repo_path: Path) -> None:
+    """``add_data`` stages a file that a commit then exposes via ``data_at``."""
+    repo = dx.Repository.init(fresh_repo_path)
+    repo.add(_build_minimal_schema())
+    data_file = fresh_repo_path / "records.json"
+    data_file.write_bytes(_RECORDS)
+
+    repo.add_data(data_file)
+    assert repo.has_staged() is True
+
+    repo.commit("schema+data", author="Test <test@example.com>")
+    (dataset,) = repo.data_at("HEAD")
+    assert dataset.data == _RECORDS
+    assert dataset.record_count == 2
+
+
+def test_add_data_without_schema_context_raises(fresh_repo_path: Path) -> None:
+    """Staging data needs a staged schema or a commit to bind to."""
+    repo = dx.Repository.init(fresh_repo_path)
+    data_file = fresh_repo_path / "records.json"
+    data_file.write_bytes(_RECORDS)
+
+    with pytest.raises(panproto.VcsError):
+        repo.add_data(data_file)
 
 
 def test_data_at_is_empty_without_committed_data(fresh_repo_path: Path) -> None:

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-17
+
+### Added
+
+- ``Repository.add_data(path)`` stages a data file for the next commit,
+  the write-side counterpart to ``data_at``. It binds the file to the
+  staged schema, or to HEAD's schema when none is staged, and the
+  committed bytes are then readable at that revision through
+  ``data_at``. A downstream that versions record values can stage and
+  read them entirely through the documented surface instead of reaching
+  the inner panproto handle. ([#54])
+
+[#54]: https://github.com/panproto/didactic/issues/54
+
 ## [0.7.8] - 2026-06-17
 
 ### Added
