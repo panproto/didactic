@@ -16,11 +16,14 @@ Pins two fixes:
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 
 import didactic.api as dx
+
+if TYPE_CHECKING:
+    from didactic.types._typing import FieldValue, JsonValue
 
 
 class _N(dx.TaggedUnion, discriminator="kind"):
@@ -114,3 +117,49 @@ def test_dict_payload_for_directly_constructed_field() -> None:
     )
     assert isinstance(node.left, _Lit)
     assert node.left.value == 1
+
+
+def _build_chain(depth: int) -> _N:
+    node: _N = _Lit(kind="lit", value=0)
+    for _ in range(depth):
+        node = _BinOp(kind="binop", op="+", left=node, right=_Lit(kind="lit", value=1))
+    return node
+
+
+def test_recursive_construction_is_linear_not_exponential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Building a depth-``D`` recursive TaggedUnion runs ``2*D+1`` constructions.
+
+    A ``TaggedUnion``-typed field keeps its variant's fully expanded wire
+    JSON in ``_storage``. Dumping it previously decoded that string back to
+    a Model and re-encoded it, re-walking the whole subtree at every
+    enclosing level; that round trip made construction ``2**(D+1) - 1``
+    ``Model.__init__`` calls (exponential, eventually hanging).
+    ``model_dump`` now reads storage directly, so the count is exactly the
+    node count.
+    """
+    from didactic.models._model import Model
+
+    original_init = Model.__init__
+    calls = 0
+
+    def counting_init(self: Model, **kwargs: FieldValue | JsonValue) -> None:
+        nonlocal calls
+        calls += 1
+        original_init(self, **kwargs)
+
+    monkeypatch.setattr(Model, "__init__", counting_init)
+
+    for depth in (4, 8, 12, 16):
+        calls = 0
+        _build_chain(depth)
+        # D BinOp nodes + (D + 1) Lit nodes, and no reconstruction beyond them
+        assert calls == 2 * depth + 1
+
+
+def test_recursive_dump_round_trips_at_depth() -> None:
+    """A deep chain dumps and reloads to the same wire JSON."""
+    node = _build_chain(24)
+    wire = node.model_dump_json()
+    assert _N.model_validate_json(wire).model_dump_json() == wire

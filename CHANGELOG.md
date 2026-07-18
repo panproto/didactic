@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-18
+
+### Fixed
+
+- Constructing a nested recursive `TaggedUnion` value is now linear in
+  the number of nodes rather than exponential in nesting depth. A
+  sum-sort field keeps its variant's fully expanded wire JSON in
+  storage, so `model_dump` reads and parses that directly instead of
+  decoding it back to a `Model` and re-encoding it (a round trip that
+  re-walked the whole subtree at every enclosing level). The emitted
+  wire form is unchanged. ([#58])
+- `derived_field_names` is a pure function of the class, so it is
+  materialised once at class-creation time as `__derived_field_names__`
+  on the metaclass and read from there, rather than recomputed on every
+  `Model.__init__` and every `model_dump`. ([#59])
+
+[#58]: https://github.com/panproto/didactic/issues/58
+[#59]: https://github.com/panproto/didactic/issues/59
+
 ## [0.9.0] - 2026-06-17
 
 ### Added

@@ -42,6 +42,7 @@ from typing import (
 
 from didactic.axioms._axioms import collect_class_axioms
 from didactic.fields._computed import computed_field_names
+from didactic.fields._derived import derived_field_names
 from didactic.fields._fields import (
     MISSING,
     Field,
@@ -380,6 +381,7 @@ class ModelMeta(type):
     __schema_kind__: str
     __model_config__: ModelConfig
     __computed_fields__: tuple[str, ...]
+    __derived_field_names__: tuple[str, ...]
     __class_axioms__: tuple[Axiom, ...]
     __field_validators__: dict[str, tuple[tuple[str, str], ...]]
     __model_validators__: tuple[str, ...]
@@ -431,6 +433,7 @@ class ModelMeta(type):
             cls.__schema_kind__ = name
             cls.__model_config__ = DEFAULT_CONFIG
             cls.__computed_fields__ = ()
+            cls.__derived_field_names__ = ()
             cls.__class_axioms__ = ()
             cls.__field_validators__ = {}
             cls.__model_validators__ = ()
@@ -440,6 +443,11 @@ class ModelMeta(type):
         cls.__model_config__ = mcs._resolve_config(cls, config_overrides)
         cls.__field_specs__ = ModelMeta.collect_field_specs(cls)
         cls.__computed_fields__ = computed_field_names(cls)
+        # ``derived_field_names`` is a pure function of the class (it walks
+        # the MRO for ``@derived``-marked properties), so materialise it once
+        # here rather than recomputing it on every ``Model.__init__`` and
+        # every ``model_dump``.
+        cls.__derived_field_names__ = derived_field_names(cls)
         cls.__class_axioms__ = collect_class_axioms(cls)
         cls.__field_validators__ = ModelMeta.collect_field_validators(cls)
         cls.__model_validators__ = ModelMeta.collect_model_validators(cls)

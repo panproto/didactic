@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import didactic.api as dx
+from didactic.fields import _derived
+
+if TYPE_CHECKING:
+    import pytest
 
 # -- model_dump options ----------------------------------------------
 
@@ -132,3 +138,51 @@ def test_derived_round_trip_through_dump() -> None:
     back = Person.model_validate(payload)
     assert back.first == "Grace"
     assert back.display_name == "Grace Hopper"
+
+
+def test_derived_field_names_cached_on_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The derived-name tuple is materialised once per class, not per instance.
+
+    ``derived_field_names`` is a pure function of the class, so the
+    metaclass computes it at class-creation time and stores it as
+    ``__derived_field_names__``. ``Model.__init__`` and ``model_dump``
+    read that cached tuple; neither recomputes it, so constructing and
+    dumping never re-walk the MRO.
+    """
+
+    class Base(dx.Model):
+        first: str
+        last: str
+
+        @dx.derived
+        def full(self) -> str:
+            return f"{self.first} {self.last}"
+
+    class Sub(Base):
+        title: str
+
+        @dx.derived
+        def formal(self) -> str:
+            return f"{self.title} {self.full}"
+
+    assert Base.__derived_field_names__ == ("full",)
+    assert set(Sub.__derived_field_names__) == {"full", "formal"}
+
+    calls = 0
+    original = _derived.derived_field_names
+
+    def counting(cls: type) -> tuple[str, ...]:
+        nonlocal calls
+        calls += 1
+        return original(cls)
+
+    monkeypatch.setattr(_derived, "derived_field_names", counting)
+
+    for _ in range(100):
+        instance = Sub(first="Ada", last="Lovelace", title="Dr")
+        assert instance.model_dump()["formal"] == "Dr Ada Lovelace"
+
+    # construction + dump read the cached tuple; the walker never runs
+    assert calls == 0

@@ -222,9 +222,7 @@ class Model(metaclass=ModelMeta):
         # break model_validate(model_dump(...)) for any model with
         # computed fields.
         computed_names = cls.__computed_fields__
-        from didactic.fields._derived import derived_field_names  # noqa: PLC0415
-
-        derived_names = derived_field_names(cls)
+        derived_names = cls.__derived_field_names__
         # ``extra="ignore"`` silently drops unknown kwargs at construction.
         # ``with_()`` stays strict regardless: an unknown kwarg there is
         # always a programming error (see ``Model.with_``).
@@ -460,20 +458,36 @@ class Model(metaclass=ModelMeta):
                 if not exclude_none:
                     result[key] = None
                 continue
+            # Sum-sort fields carry their variant's fully expanded wire JSON
+            # in ``_storage`` already. Read and parse that directly instead
+            # of decoding the string back to a Model and re-encoding it. The
+            # decode + re-encode round trip re-walks the entire subtree at
+            # every enclosing level, so for a recursive TaggedUnion it is
+            # exponential in nesting depth; parsing storage is a single pass
+            # and yields the identical wire shape.
+            if spec.translation.inner_kind == "sum":
+                raw = cast("FieldValue", json.loads(self._storage.get(fname)))
+                if exclude_none and raw is None:
+                    continue
+                if exclude_defaults and not spec.is_required:
+                    default = spec.default
+                    default_wire = (
+                        cast("FieldValue", json.loads(default.model_dump_json()))
+                        if isinstance(default, Model)
+                        else default
+                    )
+                    if raw == default_wire:
+                        continue
+                key = spec.alias if by_alias and spec.alias else fname
+                result[key] = raw
+                continue
             value = spec.translation.decode(self._storage.get(fname))
             if exclude_none and value is None:
                 continue
             if exclude_defaults and not spec.is_required and value == spec.default:
                 continue
             key = spec.alias if by_alias and spec.alias else fname
-            # Sum-sort fields must run first: a sum field whose current
-            # value is a Model variant would otherwise be dumped as a
-            # plain Model below and lose its constructor tag.
-            if spec.translation.inner_kind == "sum":
-                result[key] = cast(
-                    "FieldValue", json.loads(spec.translation.encode(value))
-                )
-            elif isinstance(value, Model):
+            if isinstance(value, Model):
                 # Embed[T] fields: recurse into the sub-model
                 result[key] = value.model_dump(by_alias=by_alias)
             else:
@@ -493,10 +507,9 @@ class Model(metaclass=ModelMeta):
             else:
                 result[cname] = value
         # derived fields are computed once, cached, and dumped alongside
-        # regular fields. We import lazily to avoid an import cycle.
-        from didactic.fields._derived import derived_field_names  # noqa: PLC0415
-
-        for dname in derived_field_names(cls):
+        # regular fields. The name tuple is materialised on the class at
+        # creation time (see ``ModelMeta.__new__``).
+        for dname in cls.__derived_field_names__:
             if include is not None and dname not in include:
                 continue
             if exclude is not None and dname in exclude:
