@@ -117,7 +117,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "annotated-types", specifier = ">=0.7" },
-    { name = "panproto", specifier = ">=0.56.0" },
+    { name = "panproto", specifier = ">=0.71.0" },
 ]
 
 [[package]]
@@ -555,14 +555,14 @@ wheels = [
 
 [[package]]
 name = "panproto"
-version = "0.56.0"
+version = "0.71.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/54/8805d08478456d2a735e1b655f62e28a00f3448b2fe843e17d34a0b0b409/panproto-0.56.0-cp313-abi3-macosx_10_12_x86_64.whl", hash = "sha256:97bc980a79bcee6b0b2462de3c911e5dc445ae03b526686755464a6985a3ae22", size = 10510052, upload-time = "2026-06-17T17:08:08.442Z" },
-    { url = "https://files.pythonhosted.org/packages/cd/c4/62fe169cffc8167d4e9bfa1a86a9475e45e378131a9fd156f8705a0015ee/panproto-0.56.0-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:c20874c04409a5a5eeed3d23d5ee9321bdafb8c670591cf45232bfaedadcaa4e", size = 9902837, upload-time = "2026-06-17T17:08:11.645Z" },
-    { url = "https://files.pythonhosted.org/packages/e8/4f/cbc5b6af69e60f7383923b48efb03f734c544eab98911acc400029c28fcd/panproto-0.56.0-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:8aecc9a31dec120e0c726717e285a729302afe2fc732d26849dcb18d35f1b001", size = 9956556, upload-time = "2026-06-17T17:08:14.444Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/54/25ea821479f22a35a9ae025119f558e60d3703f1f23520402760aca280fa/panproto-0.56.0-cp313-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:004f00b2b7b735770bb351fd96c722ebad9c6601f58bd9d4bb5a083dc566b921", size = 10694185, upload-time = "2026-06-17T17:08:16.981Z" },
-    { url = "https://files.pythonhosted.org/packages/62/f0/a9ac50829ca831699999c5833de41dc669162ce0cfa3660c040cc85386f7/panproto-0.56.0-cp313-abi3-win_amd64.whl", hash = "sha256:05048df0cb00e118f2ff014227c4aadb7eda55daf615ab3de3215dafce82e663", size = 11757785, upload-time = "2026-06-17T17:08:19.85Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/2f/99e05c95c6b4ee1a2bb502df5e0f5613d322437b2bfe315f9c96e71740ee/panproto-0.71.0-cp313-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a56413dc9acd249400479691b4398f2625a4f8357b4263328a63f9a76cdf7696", size = 11480323, upload-time = "2026-08-18T23:29:43.003Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/75/7dcc76d888b4cb9d30e7af78e2a78a17f3bf995719f3637b01246fed16f9/panproto-0.71.0-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:42e75a5baa244297e872bd6d7ec794fbe3106d839673d64172f91e9903fca09f", size = 10798707, upload-time = "2026-08-18T23:29:45.283Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/a5/6b9b37b41f3917f739e7ef6c417247b34e5e323e8a48eae80d98c0a810c9/panproto-0.71.0-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:1134edbad6c90ce0f56380f90d3ac2f86be2b04e0790fd5926ed24a627a85459", size = 10841078, upload-time = "2026-08-18T23:29:47.22Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/26/b6ee1796da54136f41f0b472bb552f80bad02c6691d49108937b2437b754/panproto-0.71.0-cp313-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:5dc52f8884ee7bd25e2ed05e87587b78da49040fc4f486deb43455f3a6487acc", size = 11688427, upload-time = "2026-08-18T23:29:49.205Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/92/4690a6026aa4afb214f169b769799110c1640b8ff34bf9da596a10e6a58e/panproto-0.71.0-cp313-abi3-win_amd64.whl", hash = "sha256:feb799679c4d1c3cd1cc40a7eac5432642043166e7a7f31af710edbbb7afc9fd", size = 12897004, upload-time = "2026-08-18T23:29:51.248Z" },
 ]
 
 [[package]]
