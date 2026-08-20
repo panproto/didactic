@@ -73,7 +73,6 @@ def find_correspondences(
     epic: bool = False,
     iso: bool = False,
     max_results: int = 0,
-    relax_edge_name_pruning: bool = False,
 ) -> list[Correspondence]:
     """Enumerate scored vertex correspondences between two schemas.
 
@@ -96,14 +95,12 @@ def find_correspondences(
     iso
         Require a bijection. Implies ``monic`` and ``epic``.
     max_results
-        Upper bound on the number of morphisms returned. ``0`` means
-        unbounded.
-    relax_edge_name_pruning
-        Keep kind-compatible candidate targets that share no outgoing
-        edge name with the source vertex. By default the search prunes
-        such candidates for object vertices with large candidate
-        domains, which can discard a correct pairing when every child
-        was renamed. Naturality is still enforced.
+        Upper bound on the number of morphisms returned. ``0`` asks for
+        every correspondence the search enumerates. Neither is
+        unbounded: panproto caps any request at 1024, because the
+        search materialises one result per optimum and the count of
+        optima is a property of the schema pair rather than of its
+        size.
 
     Returns
     -------
@@ -129,7 +126,6 @@ def find_correspondences(
         epic=epic,
         iso=iso,
         max_results=max_results,
-        relax_edge_name_pruning=relax_edge_name_pruning,
     )
     return [
         Correspondence(vertex_map=m.vertex_map, quality=float(m.quality)) for m in found
@@ -144,7 +140,6 @@ def best_correspondence(
     monic: bool = False,
     epic: bool = False,
     iso: bool = False,
-    relax_edge_name_pruning: bool = False,
 ) -> Correspondence | None:
     """Return the highest-quality correspondence, or ``None``.
 
@@ -162,10 +157,6 @@ def best_correspondence(
         Require surjectivity on vertices.
     iso
         Require a bijection. Implies ``monic`` and ``epic``.
-    relax_edge_name_pruning
-        Keep kind-compatible candidate targets that share no outgoing
-        edge name with the source vertex. See
-        [find_correspondences][didactic.api.find_correspondences].
 
     Returns
     -------
@@ -186,7 +177,6 @@ def best_correspondence(
         monic=monic,
         epic=epic,
         iso=iso,
-        relax_edge_name_pruning=relax_edge_name_pruning,
     )
     if found is None:
         return None

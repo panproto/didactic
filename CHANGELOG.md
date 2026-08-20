@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-20
+
+### Changed
+
+- panproto is now required at `>=0.71.0`, up from `>=0.56.0`. Its morphism
+  search became exact optimisation over a cost function network in 0.71.0,
+  and two of the changes reach didactic's own API.
+
+### Removed
+
+- **`relax_edge_name_pruning`** on `find_correspondences` and
+  `best_correspondence`. panproto deleted the edge-name domain pruner the
+  flag relaxed, on the grounds that it was a soft heuristic used as a hard
+  filter and that edge-name agreement already enters the search objective.
+  With nothing left to relax the flag had no meaning, and passing it raised
+  `TypeError` from panproto. Drop the argument; there is no replacement and
+  none is needed. Edge-name agreement still carries 0.55 of the default
+  objective weight, split across the edge and prop components, so a
+  candidate sharing no outgoing edge name with the source still scores
+  badly. It is now outscored rather than deleted from the search domain.
+  Removing a filter can only enlarge the feasible set, so the best
+  correspondence a search returns is the same or better than before, and
+  any newly reachable ones sort below it. A longer result list is the only
+  visible difference.
+
+### Fixed
+
+- **`map` and `filter` in axiom expressions evaluate their arguments in the
+  right order.** panproto's AST puts the collection first and the function
+  last, whichever order the surface syntax used, so `map f xs` and
+  `xs & map f` both parse to `Builtin('Map', [xs, f])`. The evaluator read
+  them the other way round and raised `NotImplementedError: bare lambda
+  outside an application` on every lambda it met.
+- **`check_lens_laws`'s bad-lens test catches the bad lens every run.** The
+  fixture truncates a field at five characters, and the strategy it drew
+  from could return ten examples all shorter than that, in which case the
+  broken lens round-tripped and the test passed while catching nothing. The
+  strategy now guarantees a value long enough to violate the law. This one
+  predates the panproto bump.
+
+- `max_results` on `find_correspondences` is documented as what it is: `0`
+  asks for every correspondence the search enumerates, and neither `0` nor
+  any explicit figure is unbounded, since panproto caps every request at
+  1024.
+
 ## [0.9.1] - 2026-07-18
 
 ### Fixed

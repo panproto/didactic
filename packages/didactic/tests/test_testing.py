@@ -75,5 +75,13 @@ def test_check_lens_laws_catches_a_bad_lens() -> None:
         def backward(self, u: User, complement: str) -> User:
             return u  # cannot reconstruct without the tail
 
+    # The violation only shows up on a bio longer than the truncation
+    # point, so the strategy has to guarantee one. Drawing from `users`,
+    # whose bio is `st.text(max_size=50)`, let ten examples come back all
+    # shorter than five and the bad lens round-tripped, so the test
+    # passed while catching nothing.
+    long_bios = st.builds(
+        User, id=st.text(max_size=20), bio=st.text(min_size=6, max_size=50)
+    )
     with pytest.raises(AssertionError, match="GetPut law failed"):
-        dx.testing.check_lens_laws(BadLens(), users, max_examples=10)
+        dx.testing.check_lens_laws(BadLens(), long_bios, max_examples=10)

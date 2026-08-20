@@ -465,15 +465,17 @@ def _evaluate_builtin(
         b = _evaluate(args[1], env)
         return a + b  # type: ignore[operator]
 
-    # map / filter: each takes a one-arg function as its first argument.
-    # The function is either an identifier (looked up in
+    # map / filter: the collection comes first in the AST and the
+    # function last, whichever order the surface syntax used. ``map f xs``
+    # and ``xs & map f`` both parse to ``Builtin('Map', [xs, f])``. The
+    # function is either an identifier (looked up in
     # ``_APP_BUILTINS_BY_NAME``) or a ``Lam``.
     if op == "Map":
-        func_node, seq_node = args[0], args[1]
+        seq_node, func_node = args[0], args[1]
         seq = cast("Sequence[FieldValue]", _evaluate(seq_node, env))
         return cast("EvalResult", [_apply_unary(func_node, item, env) for item in seq])
     if op == "Filter":
-        func_node, seq_node = args[0], args[1]
+        seq_node, func_node = args[0], args[1]
         seq = cast("Sequence[FieldValue]", _evaluate(seq_node, env))
         return cast(
             "EvalResult",
