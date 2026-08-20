@@ -465,11 +465,14 @@ def _evaluate_builtin(
         b = _evaluate(args[1], env)
         return a + b  # type: ignore[operator]
 
-    # map / filter: the collection comes first in the AST and the
-    # function last, whichever order the surface syntax used. ``map f xs``
-    # and ``xs & map f`` both parse to ``Builtin('Map', [xs, f])``. The
-    # function is either an identifier (looked up in
-    # ``_APP_BUILTINS_BY_NAME``) or a ``Lam``.
+    # map / filter: prefix application ``map f xs`` parses to
+    # ``Builtin('Map', [xs, f])``, so the collection comes first in the AST
+    # and the function last, the reverse of the surface order. The function
+    # is either an identifier (looked up in ``_APP_BUILTINS_BY_NAME``) or a
+    # ``Lam``. The pipeline form ``xs & map f`` parses to a partial
+    # application instead, ``App(Builtin('Map', [f]), xs)``, which this
+    # evaluator does not accept; it reaches the App branch below and raises
+    # NotImplementedError.
     if op == "Map":
         seq_node, func_node = args[0], args[1]
         seq = cast("Sequence[FieldValue]", _evaluate(seq_node, env))
