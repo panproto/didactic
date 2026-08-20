@@ -22,10 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flag relaxed, on the grounds that it was a soft heuristic used as a hard
   filter and that edge-name agreement already enters the search objective.
   With nothing left to relax the flag had no meaning, and passing it raised
-  `TypeError` from panproto. Callers that passed `True` were asking for the
-  behaviour that is now unconditional and can drop the argument; callers
-  that left it `False` were asking for pruning that no longer happens, and
-  their searches may now return correspondences the pruner used to discard.
+  `TypeError` from panproto. Drop the argument; there is no replacement and
+  none is needed. Edge-name agreement still carries 0.55 of the default
+  objective weight, split across the edge and prop components, so a
+  candidate sharing no outgoing edge name with the source still scores
+  badly. It is now outscored rather than deleted from the search domain.
+  Removing a filter can only enlarge the feasible set, so the best
+  correspondence a search returns is the same or better than before, and
+  any newly reachable ones sort below it. A longer result list is the only
+  visible difference.
 
 ### Fixed
 
