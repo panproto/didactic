@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Recorded that `map` and `filter` are supported in axioms only in prefix
+  form, as in `map f xs`. The pipeline form `xs & map f` parses to a partial
+  application, `App(Builtin('Map', [f]), xs)`, which the axiom evaluator
+  rejects with `NotImplementedError`. Pretty-printing renders the two forms
+  identically, so the difference is easy to miss; a test now pins it.
+
 ## [0.10.0] - 2026-08-20
 
 ### Changed

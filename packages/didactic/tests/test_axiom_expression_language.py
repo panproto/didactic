@@ -191,6 +191,47 @@ def test_filter_with_lambda() -> None:
     assert pred(cast("dict[str, FieldValue]", {"xs": [-1, 1, 2]})) is True
 
 
+def test_map_applies_the_function_to_the_elements() -> None:
+    """The mapped values must be right, not merely the right count.
+
+    ``map f xs`` parses to ``Builtin('Map', [xs, f])``, so the collection is
+    the first argument and the function the second, the reverse of the
+    surface order. Reading them in surface order silently maps over the
+    wrong operand, which a length-only assertion does not catch.
+    """
+    env = cast("dict[str, FieldValue]", {"xs": [1, 2, 3]})
+    assert (
+        parse_axiom_predicate(dx.axiom("map (\\x -> x + 10) xs == [11, 12, 13]"))(env)
+        is True
+    )
+    assert (
+        parse_axiom_predicate(dx.axiom("map (\\x -> x + 10) xs == [1, 2, 3]"))(env)
+        is False
+    )
+
+
+def test_filter_keeps_the_matching_elements() -> None:
+    env = cast("dict[str, FieldValue]", {"xs": [1, 2, 3]})
+    assert (
+        parse_axiom_predicate(dx.axiom("filter (\\x -> x > 1) xs == [2, 3]"))(env)
+        is True
+    )
+
+
+def test_pipeline_map_is_not_supported() -> None:
+    """``xs & map f`` is a partial application the evaluator does not accept.
+
+    It parses to ``App(Builtin('Map', [f]), xs)`` rather than to
+    ``Builtin('Map', [xs, f])``, so it reaches the App branch and raises.
+    Pretty-printing renders both forms identically, which makes the
+    difference easy to miss; this test pins the actual behaviour.
+    """
+    env = cast("dict[str, FieldValue]", {"xs": [1, 2, 3]})
+    pred = parse_axiom_predicate(dx.axiom("(xs & map (\\x -> x + 10)) == [11, 12, 13]"))
+    with pytest.raises(NotImplementedError):
+        pred(env)
+
+
 # -- Just / Nothing -----------------------------------------------------
 
 
