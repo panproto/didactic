@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-26
+
+### Changed
+
+- panproto is now required at `>=0.72.0`, up from `>=0.71.0`. The 0.72.0 release carries twenty-six breaking API changes across the engine, none of which touch the surface didactic uses: the full suite passes and the type checker reports no errors against it. The floor moves anyway, because the previous open lower bound resolved installations to a version this project's own CI had never exercised.
+
 ### Documentation
 
 - Recorded that `map` and `filter` are supported in axioms only in prefix
