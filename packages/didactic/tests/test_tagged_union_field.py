@@ -89,7 +89,7 @@ def test_tagged_union_decode_rejects_missing_discriminator() -> None:
     from didactic.types._types import classify
 
     t = classify(Parameter)
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="missing discriminator field 'kind'"):
         t.decode('{"value": 1.5}')
 
 
@@ -97,8 +97,19 @@ def test_tagged_union_decode_rejects_unknown_discriminator_value() -> None:
     from didactic.types._types import classify
 
     t = classify(Parameter)
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="no variant registered for kind="):
         t.decode('{"kind": "nonexistent", "value": 1.5}')
+
+
+def test_unknown_discriminator_reaches_the_caller_as_a_validation_error() -> None:
+    """``model_validate_json`` reports a decoder refusal like any other failure."""
+    from didactic.fields._validators import ValidationError
+
+    with pytest.raises(ValidationError) as excinfo:
+        _Effect.model_validate_json('{"param": {"kind": "nonexistent"}}')
+    (entry,) = excinfo.value.entries
+    assert entry.loc == ("param",)
+    assert "no variant registered for kind='nonexistent'" in entry.msg
 
 
 def test_tagged_union_works_as_dict_value_type() -> None:

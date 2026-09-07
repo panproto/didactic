@@ -126,11 +126,14 @@ class TypeTranslation:
     """Extra sort declarations the parent Model's Theory must include.
 
     Populated by translations that generate auxiliary panproto sorts
-    beyond the field's primary sort: currently only the Model-ref
-    recursive-alias translation, which contributes a closed sum sort
-    plus optional ``List`` / ``Map`` helper sorts. Empty for every
-    other translation. ``build_theory_spec`` walks this on each field
-    spec and merges by sort name (later duplicates dropped).
+    beyond the field's primary sort and whose shape is fixed once the
+    field is classified: currently only the Model-ref recursive-alias
+    translation, which contributes a closed sum sort plus optional
+    ``List`` / ``Map`` helper sorts. Empty for every other translation,
+    including the TaggedUnion translations, which supply
+    :attr:`auxiliary_spec` instead. ``build_theory_spec`` merges what
+    :meth:`resolve_auxiliary` returns by sort name (later duplicates
+    dropped).
     """
 
     auxiliary_ops: tuple[SpecRecord, ...] = ()
@@ -140,6 +143,41 @@ class TypeTranslation:
     declared in :attr:`auxiliary_sorts`. Walked alongside the sorts
     in ``build_theory_spec``; deduped by op name.
     """
+
+    auxiliary_spec: (
+        Callable[[], tuple[tuple[SpecRecord, ...], tuple[SpecRecord, ...]]] | None
+    ) = None
+    """Recompute the auxiliary sorts and ops at Theory-build time.
+
+    Set by translations whose auxiliary shape depends on state that can
+    still change after the field is classified: the TaggedUnion paths,
+    whose sum sort is one constructor per registered variant and whose
+    registry is written by each variant's own class body. Classifying a
+    union-typed field freezes nothing, so the provider is consulted when
+    ``build_theory_spec`` runs instead, and the sum sort names whatever
+    variants exist at that point.
+
+    ``None`` for every other translation, whose auxiliary shape is fixed
+    at classify time and lives in :attr:`auxiliary_sorts` /
+    :attr:`auxiliary_ops`. Read both through :meth:`resolve_auxiliary`
+    rather than the attributes.
+    """
+
+    def resolve_auxiliary(
+        self,
+    ) -> tuple[tuple[SpecRecord, ...], tuple[SpecRecord, ...]]:
+        """Return the auxiliary sorts and ops to splice into the parent Theory.
+
+        Returns
+        -------
+        tuple
+            ``(sorts, ops)``, from :attr:`auxiliary_spec` when that
+            provider is set and from the static :attr:`auxiliary_sorts` /
+            :attr:`auxiliary_ops` attributes otherwise.
+        """
+        if self.auxiliary_spec is not None:
+            return self.auxiliary_spec()
+        return self.auxiliary_sorts, self.auxiliary_ops
 
 
 class TypeNotSupportedError(TypeError):
@@ -1139,7 +1177,7 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
                 f"alias {alias_name!r} payload uses unknown constructor "
                 f"{tag!r}; expected one of {sorted(table)!r}."
             )
-            raise KeyError(tag)
+            raise ValueError(msg)
         target = table[tag]
         if isinstance(target, type):
             if target in _JSON_PRIMITIVE_TYPES:
@@ -1205,20 +1243,36 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
 # tag, baked into every variant.
 #
 # The translation also exposes the closed sum sort plus per-variant
-# constructor ops via ``auxiliary_sorts`` / ``auxiliary_ops``, so the
-# parent Model's Theory carries the same panproto-native sum-sort shape
-# as a Model-ref recursive alias would.
+# constructor ops via ``auxiliary_spec``, so the parent Model's Theory
+# carries the same panproto-native sum-sort shape as a Model-ref
+# recursive alias would. That provider runs when the Theory is built
+# rather than when the field is classified, so the sum sort names the
+# variants registered by then; a root with none yet contributes an
+# empty closed sum, which gains its constructors once the variants are
+# imported and the Theory is next built.
 
 
 def _is_tagged_union_root(cls: type) -> bool:
-    """Return True iff ``cls`` is a ``TaggedUnion`` subclass with variants set."""
+    """Return True iff ``cls`` is a ``TaggedUnion`` subclass declaring a discriminator.
+
+    Notes
+    -----
+    Whether any variant is registered yet does not enter the test. The
+    registry is written by each variant's own class body, so a root
+    declared in a module that must not import its variants (the layered
+    case: root low, variants high) has an empty registry for as long as
+    nothing has imported them. Gating on the registry would make a
+    field's legality depend on import order, which is exactly the
+    coupling the encode, decode and Theory paths avoid by reading
+    ``cls.__variants__`` live.
+    """
     from didactic.fields._unions import TaggedUnion  # noqa: PLC0415
 
     if not issubclass(cls, TaggedUnion):
         return False
     if cls is TaggedUnion:
         return False
-    return cls.__discriminator__ is not None and bool(cls.__variants__)
+    return cls.__discriminator__ is not None
 
 
 def _tagged_union_translation(cls: type) -> TypeTranslation:
@@ -1228,20 +1282,15 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
     that already carries the discriminator field). The decoder
     inspects the discriminator field, looks the variant up in
     ``cls.__variants__``, and instantiates it via ``model_validate``.
+    Every lookup reads the registry as it stands at that moment, so a
+    variant registered after this call participates like any other.
+
+    A payload missing the discriminator, or naming a value no variant
+    claims, raises ``ValueError``; the construction and JSON-loading
+    paths turn that into a ``ValidationError`` entry against the field.
     """
     discriminator = cast("str", cls.__discriminator__)  # type: ignore[attr-defined]
     union_name = cls.__name__
-    initial_variants = cast(
-        "dict[object, type[Model]]",
-        cls.__variants__,  # type: ignore[attr-defined]
-    )
-    # Snapshot at classify time only for the auxiliary Theory shape;
-    # the runtime encode/decode path reads ``cls.__variants__`` live so
-    # variants registered after this field's classify call (mutually
-    # recursive AST shapes are the canonical case) participate fully.
-    aux_sorts, aux_ops = _tagged_union_aux_spec(
-        union_name, discriminator, dict(initial_variants)
-    )
 
     def current_variants() -> dict[object, type[Model]]:
         live = cast(
@@ -1261,9 +1310,20 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
             payload = cast("dict[str, JsonValue]", value)
             disc_value = cast("object", payload[discriminator])
             variant_cls = variants_by_value.get(disc_value)
-            if variant_cls is not None:
-                instance = variant_cls.model_validate_json(json.dumps(payload))
-                return cast("JsonValue", json.loads(instance.model_dump_json()))
+            if variant_cls is None:
+                # a dict that names the discriminator is a payload, not a
+                # stray value; report the tag it failed to match rather
+                # than falling through to the "not a registered variant"
+                # message, which would only name its Python type.
+                known_values = sorted(repr(v) for v in variants_by_value)
+                msg = (
+                    f"TaggedUnion {union_name!r} has no variant registered "
+                    f"for {discriminator}={disc_value!r}; expected one of "
+                    f"[{', '.join(known_values)}]."
+                )
+                raise ValueError(msg)
+            instance = variant_cls.model_validate_json(json.dumps(payload))
+            return cast("JsonValue", json.loads(instance.model_dump_json()))
         for variant_cls in variants_by_value.values():
             if isinstance(value, variant_cls):
                 # Route through ``model_dump_json`` so any nested
@@ -1294,17 +1354,17 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
                 f"TaggedUnion {union_name!r} payload is missing discriminator "
                 f"field {discriminator!r}; got keys {sorted(payload)!r}."
             )
-            raise KeyError(discriminator)
+            raise ValueError(msg)
         disc_value = payload[discriminator]
         variant_cls = variants_by_value.get(disc_value)
         if variant_cls is None:
-            known_values = [repr(v) for v in variants_by_value]
+            known_values = sorted(repr(v) for v in variants_by_value)
             msg = (
                 f"TaggedUnion {union_name!r} has no variant registered for "
                 f"{discriminator}={disc_value!r}; expected one of "
-                f"{known_values}."
+                f"[{', '.join(known_values)}]."
             )
-            raise KeyError(disc_value)
+            raise ValueError(msg)
         # Route through ``model_validate_json`` so the variant's per-field
         # ``from_json`` callables get a chance to coerce JSON-shaped values
         # (e.g. list -> tuple for ``tuple[float, ...]`` fields) before
@@ -1321,14 +1381,16 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
     def from_json(v: JsonValue) -> FieldValue:
         return decode_one(v)
 
+    def aux_spec() -> tuple[tuple[SpecRecord, ...], tuple[SpecRecord, ...]]:
+        return _tagged_union_aux_spec(union_name, discriminator, current_variants())
+
     return TypeTranslation(
         sort=union_name,
         encode=enc,
         decode=dec,
         inner_kind="sum",
         from_json=from_json,
-        auxiliary_sorts=aux_sorts,
-        auxiliary_ops=aux_ops,
+        auxiliary_spec=aux_spec,
     )
 
 
@@ -1345,6 +1407,10 @@ def _tagged_union_aux_spec(
     the variant's primary sort as its single input and outputs the
     union sort. The closed sum sort declares ``Closed`` against every
     constructor name.
+
+    Called once per Theory build rather than once per classify, so
+    ``variants_by_value`` is whatever the root's registry holds by then.
+    An empty registry gives a closed sum over no constructors.
     """
     constructor_table: dict[str, type[Model]] = {}
     for disc_value, variant_cls in variants_by_value.items():
@@ -1444,9 +1510,8 @@ def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
             )
             raise TypeError(msg)
 
-    aux_sorts, aux_ops = _tagged_union_aux_spec(
-        union_name, discriminator, current_variants()
-    )
+    def aux_spec() -> tuple[tuple[SpecRecord, ...], tuple[SpecRecord, ...]]:
+        return _tagged_union_aux_spec(union_name, discriminator, current_variants())
 
     def encode_one(value: object) -> JsonValue:
         variants = current_variants()
@@ -1455,9 +1520,18 @@ def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
             disc_value = cast("object", payload[discriminator])
             _check_overlap_for(disc_value)
             variant_cls = variants.get(disc_value)
-            if variant_cls is not None:
-                instance = variant_cls.model_validate_json(json.dumps(payload))
-                return cast("JsonValue", json.loads(instance.model_dump_json()))
+            if variant_cls is None:
+                # see the single-root encoder: a dict naming the
+                # discriminator is a payload, so name the tag it missed.
+                known_values = sorted(repr(v) for v in variants)
+                msg = (
+                    f"{union_name!r} has no variant registered for "
+                    f"{discriminator}={disc_value!r}; expected one of "
+                    f"[{', '.join(known_values)}]."
+                )
+                raise ValueError(msg)
+            instance = variant_cls.model_validate_json(json.dumps(payload))
+            return cast("JsonValue", json.loads(instance.model_dump_json()))
         instance_disc = getattr(cast("object", value), discriminator, None)
         if instance_disc is not None:
             _check_overlap_for(instance_disc)
@@ -1484,18 +1558,18 @@ def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
                 f"{union_name!r} payload is missing discriminator "
                 f"field {discriminator!r}; got keys {sorted(payload)!r}."
             )
-            raise KeyError(discriminator)
+            raise ValueError(msg)
         disc_value = payload[discriminator]
         _check_overlap_for(disc_value)
         variant_cls = variants.get(disc_value)
         if variant_cls is None:
-            known_values = [repr(v) for v in variants]
+            known_values = sorted(repr(v) for v in variants)
             msg = (
                 f"{union_name!r} has no variant registered for "
                 f"{discriminator}={disc_value!r}; expected one of "
-                f"{known_values}."
+                f"[{', '.join(known_values)}]."
             )
-            raise KeyError(disc_value)
+            raise ValueError(msg)
         return variant_cls.model_validate_json(json.dumps(payload))
 
     def enc(v: FieldValue) -> Encoded:
@@ -1513,8 +1587,7 @@ def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
         decode=dec,
         inner_kind="sum",
         from_json=from_json,
-        auxiliary_sorts=aux_sorts,
-        auxiliary_ops=aux_ops,
+        auxiliary_spec=aux_spec,
     )
 
 

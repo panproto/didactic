@@ -45,7 +45,11 @@ isinstance(c2, Circle)        # True
 ```
 
 A payload whose discriminator does not match any registered variant
-raises a `ValidationError`.
+raises a `ValidationError`. The same holds one level up: when a union
+sits behind a field of some other model, a payload naming an
+unregistered value fails that model's validation with an entry located
+at the field, rather than escaping as a bare `KeyError` from the
+decoder.
 
 ## Listing variants
 
@@ -106,6 +110,39 @@ BinOp(
 unions: nested variants are written as their natural JSON shape
 (the discriminator key is the constructor tag) and reconstructed by
 dispatching each child dict through the live variant registry.
+
+## Declaring the root before its variants
+
+A root is a legal field type before any variant is registered:
+
+```python
+class ParserSpec(dx.TaggedUnion, discriminator="kind"):
+    pass
+
+
+class RunSpec(dx.Model):
+    parser: ParserSpec             # no variant exists yet
+
+
+class ChartParser(ParserSpec):     # registered afterwards
+    kind: Literal["chart"] = "chart"
+    beam: int = 8
+```
+
+This is what a layered application needs. The root sits in a low layer
+and its variants in higher layers that the low layer must not import,
+so the module declaring `RunSpec` cannot make a variant exist before
+its own class body runs. Field classification therefore never consults
+the registry; the optional, tuple and dict spellings
+(`ParserSpec | None`, `tuple[ParserSpec, ...]`, `dict[str, ParserSpec]`)
+behave the same way.
+
+The Theory follows the registry as well. The union's closed sum sort is
+built when `RunSpec.__theory__` is first read rather than when `parser`
+was classified, so it carries one constructor per variant registered by
+that point, and a root with none yet gives a closed sum over no
+constructors. `__theory__` is cached on first read, so read it once the
+variants are imported.
 
 ## Union of two TaggedUnion roots
 

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-07
+
+### Fixed
+
+- **A `TaggedUnion` root with no variants registered yet is a usable
+  field type.** Classification consulted `cls.__variants__` and rejected
+  an empty registry, so whether `parser: ParserSpec` was legal depended
+  on whether anything had imported a variant before the enclosing class
+  body ran. The failure surfaced at import time as a
+  `TypeNotSupportedError`, and it hit `ParserSpec | None`,
+  `tuple[ParserSpec, ...]` and `dict[str, ParserSpec]` alike. Nothing
+  else in the machinery needed the registry to be populated: the encode
+  and decode paths already read it live, which is what makes mutually
+  recursive variants work in any declaration order. The layered case is
+  the one this blocked, where the root belongs to a low layer and its
+  variants to higher layers the low layer must not import. ([#64])
+- **The union's sum sort in the parent Theory names the variants
+  registered when the Theory is built**, not the ones that happened to
+  exist when the field was classified. A `TypeTranslation` may now carry
+  an `auxiliary_spec` provider that `build_theory_spec` calls, and both
+  `TaggedUnion` paths (single root, and `A | B` over two roots) supply
+  one. Read the pair through the new `TypeTranslation.resolve_auxiliary`
+  rather than the `auxiliary_sorts` / `auxiliary_ops` attributes. A root
+  with nothing registered contributes a closed sum over no constructors;
+  `__theory__` still caches on first read, so read it after the variants
+  are imported. ([#64])
+- **A malformed tagged-union payload reaches the caller as a
+  `ValidationError`.** The decoders built a message naming the missing
+  or unmatched discriminator and then discarded it, raising a bare
+  `KeyError` carrying only the tag. `KeyError` is neither `TypeError`
+  nor `ValueError`, so it also escaped the wrapper that turns a decoder
+  refusal into a validation entry, and `model_validate_json` propagated
+  it unchanged. The same defect sat on the recursive-alias decoder's
+  unknown-constructor branch. All of them now raise `ValueError` with
+  the message they had already built, and `model_validate_json` reports
+  it against the offending field. Callers matching on `KeyError` should
+  match on `didactic.ValidationError` (or `ValueError` at the
+  translation layer). ([#64])
+- Encoding a dict payload whose discriminator matches no variant names
+  the tag it missed, rather than reporting that a value of type `dict`
+  is not a registered variant. ([#64])
+
+[#64]: https://github.com/panproto/didactic/issues/64
+
 ## [0.10.1] - 2026-08-26
 
 ### Changed

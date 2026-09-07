@@ -136,18 +136,21 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
     # is its own piece of work (panproto-Expr-parser hookup).
     eqs: list[dict[str, JsonValue]] = []
 
-    # auxiliary sorts/ops contributed by translations (currently only the
-    # Model-ref recursive-alias sum-sort translation). Deduped by ``name``.
+    # auxiliary sorts/ops contributed by translations: the Model-ref
+    # recursive-alias sum sort, and the TaggedUnion sum sort, which is
+    # recomputed here from the live variant registry rather than read
+    # from a classify-time snapshot. Deduped by ``name``.
     seen_aux_sorts: set[str] = set()
     seen_aux_ops: set[str] = set()
 
     for fname, spec in field_specs.items():
-        for aux_sort in spec.translation.auxiliary_sorts:
+        aux_sorts, aux_ops = spec.translation.resolve_auxiliary()
+        for aux_sort in aux_sorts:
             sort_name = cast("str", aux_sort["name"])
             if sort_name not in seen_aux_sorts:
                 seen_aux_sorts.add(sort_name)
                 sorts.append(aux_sort)
-        for aux_op in spec.translation.auxiliary_ops:
+        for aux_op in aux_ops:
             op_name = cast("str", aux_op["name"])
             if op_name not in seen_aux_ops:
                 seen_aux_ops.add(op_name)
