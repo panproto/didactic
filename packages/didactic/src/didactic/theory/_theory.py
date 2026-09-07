@@ -9,7 +9,10 @@ Coverage
 --------
 The builder emits the model's primary sort, one constraint sort per
 scalar field, one accessor operation per scalar field, and one
-edge/containment operation per ``Ref[T]`` / ``Embed[T]`` field. Class
+edge/containment operation per ``Ref[T]`` / ``Embed[T]`` / sum-sorted
+field. An edge points at the sort the field targets whether or not the
+field is optional; ``T | None`` sets an ``optional`` key on the
+operation rather than changing the sort it names. Class
 axioms are collected on the Python side; their translation into
 panproto ``Equation`` records (parsed via the panproto-Expr parser
 into a ``lhs``/``rhs`` Term pair) is not yet implemented, so the
@@ -40,6 +43,7 @@ if TYPE_CHECKING:
 
     from didactic.fields._fields import FieldSpec
     from didactic.models._model import Model
+    from didactic.types._types import TypeTranslation
     from didactic.types._typing import JsonValue
 
 
@@ -155,23 +159,25 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
             if op_name not in seen_aux_ops:
                 seen_aux_ops.add(op_name)
                 ops.append(aux_op)
+        optional = spec.translation.is_optional
         if spec.translation.inner_kind == "ref":
             # Ref[T] becomes a structural edge from this sort to T's sort
-            target_sort = spec.translation.sort.removeprefix("Ref ").strip()
-            ops.append(_edge_accessor(fname, schema_kind, target_sort))
+            target_sort = _structural_target(spec.translation, "Ref ")
+            ops.append(_edge_accessor(fname, schema_kind, target_sort, optional))
             continue
         if spec.translation.inner_kind == "embed":
             # Embed[T] becomes a containment edge to T's primary sort.
             # The embedded sort itself is not redeclared here; the target
             # Model's own theory carries it. The containment is structural.
-            target_sort = spec.translation.sort.removeprefix("Embed ").strip()
-            ops.append(_embed_accessor(fname, schema_kind, target_sort))
+            target_sort = _structural_target(spec.translation, "Embed ")
+            ops.append(_embed_accessor(fname, schema_kind, target_sort, optional))
             continue
         if spec.translation.inner_kind == "sum":
-            # Model-ref recursive alias: the alias's sum sort is already
-            # in ``auxiliary_sorts`` above; the field accessor returns
-            # that sort directly (no per-field constraint sort needed).
-            ops.append(_edge_accessor(fname, schema_kind, spec.translation.sort))
+            # A TaggedUnion root, or a Model-ref recursive alias: the sum
+            # sort is already in the auxiliary records above, so the field
+            # accessor returns it directly (no per-field constraint sort).
+            target_sort = _structural_target(spec.translation, "")
+            ops.append(_edge_accessor(fname, schema_kind, target_sort, optional))
             continue
         # constraint sort name follows panproto convention: ParentSort_field
         constraint_sort_name = f"{schema_kind}_{fname}"
@@ -256,8 +262,43 @@ def _constraint_sort(name: str, value_sort: str) -> dict[str, JsonValue]:
     }
 
 
+def _structural_target(translation: TypeTranslation, prefix: str) -> str:
+    """Return the sort a structural edge points at, unwrapping the spelling.
+
+    Parameters
+    ----------
+    translation
+        The field's translation. Its ``sort`` is a didactic-side
+        descriptor, not a bare sort name: an optional field reads
+        ``"Maybe (Ref Target)"`` and a ``Ref`` field ``"Ref Target"``.
+    prefix
+        The marker prefix to strip for this edge kind (``"Ref "``,
+        ``"Embed "``, or ``""`` for a sum sort, which carries none).
+
+    Returns
+    -------
+    str
+        The target sort name.
+
+    Notes
+    -----
+    Optionality does not change what a field points at, so it is peeled
+    off here rather than reaching panproto as part of the sort name.
+    ``Maybe S`` is not a sort panproto can resolve: its ``SortExpr``
+    applies a sort to dependent *terms*, so there is no ``Maybe`` type
+    former to apply to a sort, and an operation output naming one would
+    reference a sort no theory declares.
+    """
+    sort = translation.sort
+    if translation.is_optional:
+        sort = sort.removeprefix("Maybe ").strip()
+        if sort.startswith("(") and sort.endswith(")"):
+            sort = sort[1:-1].strip()
+    return sort.removeprefix(prefix).strip()
+
+
 def _edge_accessor(
-    field_name: str, parent_sort: str, target_sort: str
+    field_name: str, parent_sort: str, target_sort: str, optional: bool = False
 ) -> dict[str, JsonValue]:
     """Build an Operation dict for a ``Ref[T]`` edge.
 
@@ -269,16 +310,25 @@ def _edge_accessor(
         The model's primary sort.
     target_sort
         The referenced model's primary sort name.
+    optional
+        Whether the field was spelled ``T | None``. Recorded on the
+        operation as an informational key; panproto's schema spec
+        ignores keys it does not know, and the alternative (folding
+        optionality into the output sort name) names a sort nothing
+        declares.
     """
-    return {
+    op: dict[str, JsonValue] = {
         "name": field_name,
         "inputs": [["self", parent_sort, "No"]],
         "output": target_sort,
     }
+    if optional:
+        op["optional"] = True
+    return op
 
 
 def _embed_accessor(
-    field_name: str, parent_sort: str, target_sort: str
+    field_name: str, parent_sort: str, target_sort: str, optional: bool = False
 ) -> dict[str, JsonValue]:
     """Build an Operation dict for an ``Embed[T]`` containment edge.
 
@@ -296,12 +346,18 @@ def _embed_accessor(
         The model's primary sort.
     target_sort
         The embedded model's primary sort name.
+    optional
+        Whether the field was spelled ``T | None``; see
+        :func:`_edge_accessor`.
     """
-    return {
+    op: dict[str, JsonValue] = {
         "name": field_name,
         "inputs": [["self", parent_sort, "No"]],
         "output": target_sort,
     }
+    if optional:
+        op["optional"] = True
+    return op
 
 
 def _field_accessor(

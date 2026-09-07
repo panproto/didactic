@@ -42,7 +42,32 @@ ops = [
 
 `Ref[T]` and `Embed[T]` produce operations whose output is `T`'s
 primary sort, which gives the Theory an explicit edge to the target
-class.
+class. A `dx.TaggedUnion` root used as a field type does the same,
+pointing at the union's sum sort.
+
+An optional field points at the same sort its required counterpart
+does. Optionality is a fact about the edge, not a different target, so
+`p: Node | None` emits an edge to `Node` carrying `"optional": true`
+rather than an edge to some `Maybe Node`:
+
+```text
+ops = [
+    {"name": "p", "inputs": [["self", "Holder", "No"]],
+     "output": "Node", "optional": True},
+]
+```
+
+There is no `Maybe` sort to point at. A panproto `SortExpr` applies a
+sort to dependent *terms*, so nothing lets you build one sort out of
+another the way `Maybe Node` would need; naming one in an operation
+would reference a sort no Theory declares.
+
+Container fields (`tuple[T, ...]`, `frozenset[T]`, `dict[str, V]`) are
+different: their encoded form is a JSON string, so the field itself
+gets a `Val[Str]` constraint sort, as for a scalar. Any sort the
+element type contributes is still declared, so a union behind a
+container stays visible in the Theory even though the field does not
+point at it.
 
 ## Equations
 

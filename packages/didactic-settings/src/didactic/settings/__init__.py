@@ -27,7 +27,7 @@ from didactic.settings._settings import (
     Settings,
 )
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 __all__ = [
     "CliSource",
