@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import enum
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time
 from decimal import Decimal
 from functools import reduce
@@ -1717,10 +1717,14 @@ def _classify_tuple(
                 raise TypeError(msg)
             return tuple(inner.from_json(item) for item in value)
 
-        return TypeTranslation(
+        # see the optional wrapper: the container carries the element
+        # translation's auxiliary contribution through.
+        return replace(
+            inner,
             sort=f"List {_paren(inner.sort)}",
             encode=_make_list_encoder(inner.encode),
             decode=_make_list_decoder(inner.decode),
+            is_optional=False,
             inner_kind="list",
             from_json=from_json,
         )
@@ -1803,10 +1807,12 @@ def _classify_frozenset(args: tuple[TypeForm, ...]) -> TypeTranslation:
             raise TypeError(msg)
         return frozenset(inner.from_json(item) for item in value)
 
-    return TypeTranslation(
+    return replace(
+        inner,
         sort=f"Set {_paren(inner.sort)}",
         encode=enc,
         decode=dec,
+        is_optional=False,
         inner_kind="set",
         from_json=from_json,
     )
@@ -1844,10 +1850,12 @@ def _classify_dict(args: tuple[TypeForm, ...]) -> TypeTranslation:
             raise TypeError(msg)
         return {k: inner.from_json(v) for k, v in value.items()}
 
-    return TypeTranslation(
+    return replace(
+        inner,
         sort=f"Map String {_paren(inner.sort)}",
         encode=enc,
         decode=dec,
+        is_optional=False,
         inner_kind="map",
         from_json=from_json,
     )
@@ -1988,7 +1996,12 @@ def classify(typ: TypeForm) -> TypeTranslation:
         def from_json(v: JsonValue) -> FieldValue:
             return None if v is None else inner.from_json(v)
 
-        return TypeTranslation(
+        # ``replace`` carries the inner translation's auxiliary
+        # contribution through: wrapping a value in ``T | None`` changes
+        # how it is spelled on the wire, not which sorts the parent
+        # Model's Theory has to declare.
+        return replace(
+            inner,
             sort=f"Maybe {_paren(inner.sort)}",
             encode=enc,
             decode=dec,

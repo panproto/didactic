@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-07
+
+### Fixed
+
+- **An optional field points at the sort it targets, rather than at a
+  sort nothing declares.** `TypeTranslation.sort` is a didactic-side
+  descriptor, not a bare sort name: the optional wrapper spells it
+  `Maybe (Ref Target)`. The three edge branches of `build_theory_spec`
+  read it as a name, so `p: Node | None` emitted an operation whose
+  output was the string `Maybe Node`, and `p: Ref[Target] | None` one
+  whose output was `Maybe (Ref Target)`, the `Ref ` prefix now being
+  unreachable to the `removeprefix` that was meant to strip it. No
+  theory declares those sorts, and none can: a panproto `SortExpr`
+  applies a sort to dependent terms, so there is no `Maybe` former to
+  apply to a sort. An edge now names the same sort its required
+  counterpart does, and optionality is recorded as an `optional` key on
+  the operation.
+- **A sort contributed by an element type survives the container that
+  wraps it.** The optional, tuple, frozenset and dict wrappers each
+  built a fresh `TypeTranslation` and dropped whatever auxiliary sorts
+  and ops the inner one carried, so a `TaggedUnion` behind
+  `tuple[T, ...]` or `dict[str, V]` left its sum sort undeclared, and an
+  optional union field named a target the Theory did not declare. The
+  wrappers now carry that contribution through, which is what makes the
+  edge above resolve. A container field's own sort is unchanged: its
+  encoded form is a JSON string, so it keeps its `Val[Str]` constraint
+  sort.
+
+### Changed
+
+- The spec dict from `build_theory_spec` changes shape for two families
+  of field, so the structural fingerprint of a model carrying one
+  changes with it: an optional `Ref[T]`, `Embed[T]` or `TaggedUnion`
+  field, and a container over a `TaggedUnion`. Every other model
+  fingerprints exactly as it did in 0.11.0, verified by comparing
+  fingerprints across the two versions. A model in the affected families
+  takes a new schema URI and a new migration-registry entry; regenerate
+  those rather than hand-editing, and note that `docs/project/stability.md`
+  lists the spec dict as stable across minors, which this release breaks
+  under the pre-1.0 clause. The old shape named sorts that no theory
+  declared, so there is no version of it worth preserving behind a flag.
+
 ## [0.11.0] - 2026-09-07
 
 ### Fixed
