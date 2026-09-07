@@ -1124,8 +1124,19 @@ def _from_json_payload(
     dict
         A new dict with values coerced into Python-native forms ready for
         the field-encoder pipeline.
+
+    Raises
+    ------
+    didactic.ValidationError
+        If any field's ``from_json`` rejects its payload. A decoder that
+        refuses a malformed wire value (a tagged-union payload naming an
+        unregistered discriminator value, say) is reporting a validation
+        failure, so it is collected per field and surfaced in the same
+        shape the construction path uses, rather than escaping
+        ``model_validate_json`` as a bare ``TypeError`` / ``ValueError``.
     """
     out: dict[str, FieldValue | JsonValue] = {}
+    errors: list[ValidationErrorEntry] = []
     for fname, raw in payload.items():
         spec = cls.__field_specs__.get(fname)
         if spec is None:
@@ -1141,7 +1152,14 @@ def _from_json_payload(
             # translation's ``from_json`` would raise -- by design it
             # refuses to fabricate a value out of thin air.
             continue
-        out[fname] = spec.translation.from_json(raw)
+        try:
+            out[fname] = spec.translation.from_json(raw)
+        except (TypeError, ValueError) as exc:
+            errors.append(
+                ValidationErrorEntry(loc=(fname,), type="type_error", msg=str(exc))
+            )
+    if errors:
+        raise ValidationError(entries=tuple(errors), model=cls)
     return out
 
 
