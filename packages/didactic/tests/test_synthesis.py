@@ -367,11 +367,10 @@ def _union_annotation(model: type[dx.Model], field: str) -> type[dx.TaggedUnion]
 
 
 def _closed_list(spec: object, sort_name: str) -> list[str]:
-    """Pull a closed sum sort's ``Closed`` constructor list from a spec."""
+    """Pull a sum sort's ``constructors`` list from a spec."""
     spec_dict = cast("dict[str, list[dict[str, object]]]", spec)
     sort = next(s for s in spec_dict["sorts"] if s["name"] == sort_name)
-    closure = cast("dict[str, list[str]]", sort["closure"])
-    return closure["Closed"]
+    return cast("list[str]", sort["constructors"])
 
 
 def test_tagged_union_field_spec_roundtrip() -> None:

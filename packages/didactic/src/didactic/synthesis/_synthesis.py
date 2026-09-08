@@ -357,14 +357,17 @@ def _build_sum_types(
         subclass or a ``type`` alias). ``constructor_names`` is every
         per-arm constructor op name, so the field walk can skip them.
     """
-    closed_sums = {cast("str", s["name"]): s for s in sorts if _is_closed_sum(s)}
     ops_by_name = {cast("str", op["name"]): op for op in ops}
+    closed_sums = {
+        cast("str", s["name"]): s
+        for s in sorts
+        if _sum_constructors(s, ops) is not None
+    }
 
     constructor_names: set[str] = set()
     arms_by_sum: dict[str, list[tuple[str, str | None]]] = {}
     for sum_name, sort in closed_sums.items():
-        closure = cast("dict[str, JsonValue]", sort["closure"])
-        closed = cast("list[str]", closure["Closed"])
+        closed = cast("list[str]", _sum_constructors(sort, ops))
         arms: list[tuple[str, str | None]] = []
         for ctor_name in closed:
             constructor_names.add(ctor_name)
@@ -414,10 +417,60 @@ def _has_alias_arm(sum_name: str, arms: list[tuple[str, str | None]]) -> bool:
     )
 
 
-def _is_closed_sum(sort: dict[str, JsonValue]) -> bool:
-    """Return True iff ``sort`` is a closed sum sort (``closure`` is ``Closed``)."""
+def _sum_constructors(
+    sort: dict[str, JsonValue], ops: list[dict[str, JsonValue]]
+) -> list[str] | None:
+    """Return a sum sort's constructor names in order, or ``None`` if it is not one.
+
+    Parameters
+    ----------
+    sort
+        A Sort record from a theory spec.
+    ops
+        Every Operation record in the same theory, used for the
+        recovery path below.
+
+    Returns
+    -------
+    list of str or None
+        The constructor op names, or ``None`` when ``sort`` is not a sum
+        sort.
+
+    Notes
+    -----
+    Three spellings are recognised, in order.
+
+    First, the ``constructors`` key that
+    :func:`didactic.types._types._sum_sort_record` writes. This is the
+    spelling every spec built in-process carries.
+
+    Second, a ``Closed`` closure, which is how didactic spelled a sum
+    sort before the constructor list moved to its own key. A spec
+    persisted by an older release still reads correctly.
+
+    Third, the ops table: the constructors of sort ``S`` are the unary
+    ops named ``S_<arm>`` whose output is ``S``. Both keys above are
+    didactic-private and a ``panproto.Theory`` round-trip drops them,
+    so without this a Model-ref alias could not be synthesised back
+    from a real Theory. Declaration order is the ops' own order, which
+    is the order the constructors were emitted in.
+    """
+    declared = sort.get("constructors")
+    if isinstance(declared, list):
+        return [cast("str", c) for c in declared]
     closure = sort.get("closure")
-    return isinstance(closure, dict) and "Closed" in closure
+    if isinstance(closure, dict) and "Closed" in closure:
+        return [cast("str", c) for c in cast("list[JsonValue]", closure["Closed"])]
+    sum_name = cast("str", sort["name"])
+    prefix = f"{sum_name}_"
+    recovered = [
+        cast("str", op["name"])
+        for op in ops
+        if op.get("output") == sum_name
+        and cast("str", op["name"]).startswith(prefix)
+        and len(cast("list[JsonValue]", op.get("inputs", []))) == 1
+    ]
+    return recovered or None
 
 
 def _constructor_input_sort(op: dict[str, JsonValue] | None) -> str | None:
@@ -665,7 +718,9 @@ def _spec_dependencies(spec: dict[str, JsonValue]) -> list[str]:
     deps: list[str] = list(cast("list[str]", spec.get("extends", [])))
     sorts = cast("list[dict[str, JsonValue]]", spec.get("sorts", []))
     ops = cast("list[dict[str, JsonValue]]", spec.get("ops", []))
-    closed_sums = {cast("str", s["name"]) for s in sorts if _is_closed_sum(s)}
+    closed_sums = {
+        cast("str", s["name"]) for s in sorts if _sum_constructors(s, ops) is not None
+    }
     if not closed_sums:
         return deps
     value_names = set(_value_constraint_kinds(sorts))

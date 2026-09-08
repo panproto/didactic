@@ -137,12 +137,18 @@ the registry; the optional, tuple and dict spellings
 (`ParserSpec | None`, `tuple[ParserSpec, ...]`, `dict[str, ParserSpec]`)
 behave the same way.
 
-The Theory follows the registry as well. The union's closed sum sort is
-built when `RunSpec.__theory__` is first read rather than when `parser`
-was classified, so it carries one constructor per variant registered by
-that point, and a root with none yet gives a closed sum over no
-constructors. `__theory__` is cached on first read, so read it once the
-variants are imported.
+The Theory follows the registry as well. The union's sum sort is built
+when `RunSpec.__theory__` is first read rather than when `parser` was
+classified, so it lists one constructor per variant registered by that
+point, and a root with none yet lists no constructors. `__theory__` is
+cached on first read, so read it once the variants are imported.
+
+The sum sort's closure is `Open`, and its arms are named by a
+`constructors` key. `Closed` would say that those constructors are the
+only ways to build a value of the sort, which a union-typed field
+contradicts: `parser` is an operation from `RunSpec` to `ParserSpec`,
+so it builds one too. panproto checks exactly that, and a `Closed`
+sum sort alongside the accessor fails the check.
 
 ## Union of two TaggedUnion roots
 

@@ -594,8 +594,8 @@ class _DocWithComponent(dx.Model):
     body: _Component
 
 
-def test_alias_emits_closed_sum_sort_in_parent_theory_spec() -> None:
-    """The parent Model's Theory spec contains the alias's closed sum sort."""
+def test_alias_emits_sum_sort_in_parent_theory_spec() -> None:
+    """The parent Model's Theory spec contains the alias's sum sort."""
     from didactic.theory._theory import build_theory_spec
 
     spec = build_theory_spec(_DocWithComponent)
@@ -604,11 +604,12 @@ def test_alias_emits_closed_sum_sort_in_parent_theory_spec() -> None:
     assert "_Component" in sorts_by_name
     component = sorts_by_name["_Component"]
     assert component["kind"] == "Structural"
-    closure = cast("dict[str, list[str]]", component["closure"])
-    assert "Closed" in closure
+    # Open, because the alias-typed field emits an accessor that outputs
+    # this sort; see _sum_sort_record.
+    assert component["closure"] == "Open"
     # constructors include one per primitive arm + one per Model arm + the
     # container shapes the alias actually uses
-    constructors = set(closure["Closed"])
+    constructors = set(cast("list[str]", component["constructors"]))
     assert "_Component_str" in constructors
     assert "_Component_int" in constructors
     assert "_Component_heading" in constructors
