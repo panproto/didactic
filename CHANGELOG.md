@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-08
+
+### Fixed
+
+- **A Theory carrying a union-typed field passes panproto's theory
+  typechecker.** The sum sort a `dx.TaggedUnion` root or a Model-ref
+  recursive alias contributes was declared `Closed` against its
+  constructors. `Closed` says those constructors are the only ways to
+  build a value of the sort, and panproto's `typecheck_theory` enforces
+  it by rejecting any operation outside the list whose output is that
+  sort. A union-typed field emits exactly such an operation: `parser` is
+  an operation from `RunSpec` to `ParserSpec`, so it builds a
+  `ParserSpec` too, and a match over the sort would not be exhaustive.
+  Every Theory with a union-typed field therefore failed the check,
+  which went unnoticed because `create_theory` does not typecheck and
+  the checker was not reachable from Python before panproto 0.72.1. The
+  sum sort is now `Open` and its arms travel in a `constructors` key,
+  which is the list didactic itself consumes. The alternative, routing
+  the field through an opaque value sort to keep `Closed`, would have
+  cost the structural edge from the owner to the union that 0.12.0
+  established, in exchange for an exhaustiveness guarantee nothing in
+  didactic reads.
+
+### Changed
+
+- `didactic.synthesis` reads a sum sort's arms from the new
+  `constructors` key, falling back to a `Closed` closure so a spec
+  persisted by an earlier release still synthesises, and then to the ops
+  table so a sum sort still resolves after a `panproto.Theory` round
+  trip drops both didactic-private keys.
+- The spec dict from `build_theory_spec` changes shape for every model
+  carrying a `dx.TaggedUnion` or Model-ref-alias field, so those models'
+  structural fingerprints change. Models without one are unaffected.
+  Regenerate schema URIs and migration-registry entries for the
+  affected models rather than hand-editing them.
+
 ## [0.12.0] - 2026-09-07
 
 ### Fixed

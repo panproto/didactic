@@ -6,7 +6,7 @@ specs: the faithful inverse of
 hand-written Model, the regenerated class's forward spec equals the
 original's.
 
-Closed sum sorts round-trip: a `dx.TaggedUnion` field rebuilds into a
+Sum sorts round-trip: a `dx.TaggedUnion` field rebuilds into a
 union root with one variant per constructor, and a Model-ref recursive
 alias rebuilds into an equivalent `type` alias. Reconstruction is
 faithful at the Theory-spec level (structure), not at the level of

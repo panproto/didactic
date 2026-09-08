@@ -148,8 +148,39 @@ def test_tagged_union_works_as_tuple_element() -> None:
     assert c2.parameters == c.parameters
 
 
-def test_tagged_union_emits_closed_sum_sort_in_parent_theory() -> None:
-    """Theory spec for a Model with a TaggedUnion field has the closed sum sort."""
+def test_no_operation_outputs_a_sort_that_closes_against_others() -> None:
+    """The property panproto's ``typecheck_theory`` enforces, pinned locally.
+
+    A closed sort's constructor list is the complete set of ways to
+    build an inhabitant, so no operation outside it may output that
+    sort. A union-typed field emits an accessor that does, which is why
+    the sum sort is ``Open`` and its arms travel in ``constructors``.
+    Asserting it here means a future change that reintroduces a
+    ``Closed`` closure fails without needing panproto in the loop.
+    """
+    from didactic.theory._theory import build_theory_spec
+
+    for model in (_Effect, _Track, _Chain):
+        spec = build_theory_spec(model)
+        closures = {
+            cast("str", s["name"]): s["closure"]
+            for s in spec["sorts"]
+            if isinstance(s["closure"], dict)
+        }
+        for op in spec["ops"]:
+            output = cast("str", op["output"])
+            closed = closures.get(output)
+            if closed is None:
+                continue
+            listed = cast("dict[str, list[str]]", closed)["Closed"]
+            assert cast("str", op["name"]) in listed, (
+                f"{model.__name__}: op {op['name']!r} outputs closed sort "
+                f"{output!r} without being one of its constructors"
+            )
+
+
+def test_tagged_union_emits_sum_sort_in_parent_theory() -> None:
+    """Theory spec for a Model with a TaggedUnion field has the sum sort."""
     from didactic.theory._theory import build_theory_spec
 
     spec = build_theory_spec(_Effect)
@@ -157,8 +188,10 @@ def test_tagged_union_emits_closed_sum_sort_in_parent_theory() -> None:
     assert "Parameter" in sorts_by_name
     union_sort = sorts_by_name["Parameter"]
     assert union_sort["kind"] == "Structural"
-    closure = cast("dict[str, list[str]]", union_sort["closure"])
-    constructors = set(closure["Closed"])
+    # Open, because a union-typed field emits an accessor that outputs
+    # this sort; see _sum_sort_record.
+    assert union_sort["closure"] == "Open"
+    constructors = set(cast("list[str]", union_sort["constructors"]))
     # constructor names use the discriminator value
     assert "Parameter_constant" in constructors
     assert "Parameter_step" in constructors

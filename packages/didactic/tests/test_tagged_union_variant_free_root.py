@@ -124,18 +124,17 @@ def test_theory_sum_sort_names_the_variants_registered_by_build_time() -> None:
     """The auxiliary sum sort is recomputed from the live registry."""
     spec = build_theory_spec(RunSpec)
     sorts_by_name = {cast("str", s["name"]): s for s in spec["sorts"]}
-    closure = cast("dict[str, list[str]]", sorts_by_name["ParserSpec"]["closure"])
-    assert closure["Closed"] == ["ParserSpec_chart"]
+    constructors = cast("list[str]", sorts_by_name["ParserSpec"]["constructors"])
+    assert constructors == ["ParserSpec_chart"]
     op_names = {cast("str", op["name"]) for op in spec["ops"]}
     assert "ParserSpec_chart" in op_names
 
 
 def test_theory_sum_sort_is_empty_while_the_root_has_no_variants() -> None:
-    """A root with nothing registered contributes a closed sum over no tags."""
+    """A root with nothing registered contributes a sum sort over no arms."""
     spec = build_theory_spec(_HoldsEmpty)
     sorts_by_name = {cast("str", s["name"]): s for s in spec["sorts"]}
-    closure = cast("dict[str, list[str]]", sorts_by_name["_Empty"]["closure"])
-    assert closure["Closed"] == []
+    assert cast("list[str]", sorts_by_name["_Empty"]["constructors"]) == []
     assert _HoldsEmpty.__theory__ is not None
 
 
@@ -147,7 +146,7 @@ def test_resolve_auxiliary_tracks_registrations_made_after_classify() -> None:
 
     translation = classify(_Root)
     sorts, ops = translation.resolve_auxiliary()
-    assert cast("dict[str, list[str]]", sorts[0]["closure"])["Closed"] == []
+    assert cast("list[str]", sorts[0]["constructors"]) == []
     assert ops == ()
 
     class _Arm(_Root):
@@ -155,7 +154,7 @@ def test_resolve_auxiliary_tracks_registrations_made_after_classify() -> None:
 
     assert _Root.__variants__["arm"] is _Arm
     sorts, ops = translation.resolve_auxiliary()
-    assert cast("dict[str, list[str]]", sorts[0]["closure"])["Closed"] == ["_Root_arm"]
+    assert cast("list[str]", sorts[0]["constructors"]) == ["_Root_arm"]
     assert [cast("str", op["name"]) for op in ops] == ["_Root_arm"]
 
 

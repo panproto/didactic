@@ -954,6 +954,49 @@ def _alias_constructor_table(
     return table
 
 
+def _sum_sort_record(sum_name: str, constructor_names: list[JsonValue]) -> SpecRecord:
+    """Build the Sort record for a sum sort, naming its constructors.
+
+    Parameters
+    ----------
+    sum_name
+        The sum sort's name: a ``TaggedUnion`` root's class name, or a
+        Model-ref recursive alias's name.
+    constructor_names
+        Every per-arm constructor op name, in declaration order.
+
+    Returns
+    -------
+    dict
+        A ``Structural`` sort with an ``Open`` closure and a
+        ``constructors`` key listing the arms.
+
+    Notes
+    -----
+    The closure is ``Open`` even though the constructor set is exactly
+    known, because panproto reads ``Closed`` as a claim didactic cannot
+    make. A closed sort's constructors are the *only* ways to build an
+    inhabitant, checked by ``typecheck_theory``: no operation outside
+    the list may output that sort. A field typed as the union emits an
+    accessor that does exactly that, so ``p(holder)`` would be a term of
+    the sum sort built by no constructor, and a match over it would not
+    be exhaustive. Declaring ``Closed`` alongside the accessor made
+    every Theory carrying a union-typed field fail that check.
+
+    The constructor list is what didactic actually consumes, in
+    ``didactic.synthesis``, so it moves to a ``constructors`` key.
+    panproto ignores keys it does not know, the same way it already
+    ignores ``discriminator``.
+    """
+    return {
+        "name": sum_name,
+        "params": [],
+        "kind": "Structural",
+        "closure": "Open",
+        "constructors": constructor_names,
+    }
+
+
 def _alias_aux_spec(
     alias_name: str, table: dict[str, type | str], sig: _AliasSignature
 ) -> tuple[tuple[SpecRecord, ...], tuple[SpecRecord, ...]]:
@@ -964,18 +1007,17 @@ def _alias_aux_spec(
     tuple
         ``(sorts, ops)`` lists of plain dicts shaped for
         :func:`build_theory_spec`'s consumption. Each constructor op
-        targets the alias's primary sum sort; the sum sort itself
-        carries a ``Closed`` closure listing every constructor name.
+        targets the alias's primary sum sort, and the sum sort lists
+        every constructor name under ``constructors``.
+
+    Notes
+    -----
+    The closure is ``Open``, and the constructor list travels in a
+    ``constructors`` metadata key instead. See
+    :func:`_sum_sort_record` for why.
     """
     constructor_names: list[JsonValue] = list(table)
-    sorts: list[SpecRecord] = [
-        {
-            "name": alias_name,
-            "params": [],
-            "kind": "Structural",
-            "closure": {"Closed": constructor_names},
-        }
-    ]
+    sorts: list[SpecRecord] = [_sum_sort_record(alias_name, constructor_names)]
     ops: list[SpecRecord] = []
     # primitive constructors take a Val-Str-kinded arg and produce the sum sort
     for typ in sig.primitives:
@@ -1417,14 +1459,7 @@ def _tagged_union_aux_spec(
         tag = f"{union_name}_{disc_value!s}"
         constructor_table[tag] = variant_cls
     constructor_names: list[JsonValue] = list(constructor_table)
-    sorts: list[SpecRecord] = [
-        {
-            "name": union_name,
-            "params": [],
-            "kind": "Structural",
-            "closure": {"Closed": constructor_names},
-        }
-    ]
+    sorts: list[SpecRecord] = [_sum_sort_record(union_name, constructor_names)]
     ops: list[SpecRecord] = [
         {
             "name": tag,
