@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-09
+
+### Changed
+
+- panproto is now required at `>=0.72.1`, up from `>=0.72.0`, for
+  `panproto.typecheck_theory`.
+
+### Added
+
+- **Every Theory didactic emits is typechecked in CI.**
+  `panproto.create_theory` deserialises a spec and returns, so it accepts
+  a theory whose declarations do not hang together; `typecheck_theory` is
+  the check that does not. `test_theory_typechecks.py` runs it over one
+  model per translation path: scalars, containers, optionals, `Ref` and
+  `Embed` edges, bare Model fields, enums, tagged unions in every
+  spelling, a variant-free union root, and a union variant. This is the
+  gate the 0.13.0 defect needed and did not have. That defect shipped
+  because nothing in didactic could reach the checker before panproto
+  0.72.1, and the fix was verified against a local panproto build rather
+  than in CI.
+
+  Two tests keep the gate honest. One is a negative control: a theory
+  closed against a constructor that does not exist must be rejected, so a
+  checker that returned unconditionally cannot leave the file green. The
+  other rebuilds the pre-0.13.0 shape from a real spec, putting the
+  `Closed` closure back on a sum sort whose accessor outputs it, and
+  asserts it is rejected for the reason the original was.
+
 ## [0.13.0] - 2026-09-08
 
 ### Fixed
