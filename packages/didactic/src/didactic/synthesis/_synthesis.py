@@ -173,6 +173,18 @@ def model_from_spec(
     ops = cast("list[dict[str, JsonValue]]", spec_dict.get("ops", []))
     extends = cast("list[str]", spec_dict.get("extends", []))
 
+    primary = next(
+        (item for item in sorts if item.get("name") == sort_name),
+        None,
+    )
+    if primary is not None and primary.get("params"):
+        msg = (
+            f"cannot synthesize indexed Model {sort_name!r} from a Theory spec: "
+            "the dependent telescope preserves family sorts but not the Python "
+            "carrier annotations required to rebuild IndexedBy validation"
+        )
+        raise NotImplementedError(msg)
+
     # index the value-constraint sorts by name so each accessor op can be
     # classified as value-field-vs-edge from its output sort
     value_kinds = _value_constraint_kinds(sorts)

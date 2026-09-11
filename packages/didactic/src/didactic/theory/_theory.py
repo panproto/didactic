@@ -34,6 +34,7 @@ didactic.fields._fields.FieldSpec : the per-field record consumed here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict, cast
 
 if TYPE_CHECKING:
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     import panproto
 
     from didactic.fields._fields import FieldSpec
+    from didactic.gadt import GADT, SortExpr, Term
     from didactic.models._model import Model
     from didactic.types._types import TypeTranslation
     from didactic.types._typing import JsonValue
@@ -132,13 +134,35 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
     schema_kind = _schema_kind(cls)
     field_specs: dict[str, FieldSpec] = cls.__field_specs__
 
-    sorts: list[dict[str, JsonValue]] = [_primary_sort(schema_kind)]
+    indexed = _indexed_context(field_specs)
+    sorts: list[dict[str, JsonValue]] = [_primary_sort(schema_kind, indexed.parameters)]
     ops: list[dict[str, JsonValue]] = []
     # class-level axioms are collected on cls.__class_axioms__ but NOT
     # yet emitted as Theory equations: panproto's `Equation` carries
     # `lhs`/`rhs` Term values, and the surface-syntax -> Term translation
     # is its own piece of work (panproto-Expr-parser hookup).
     eqs: list[dict[str, JsonValue]] = []
+    directed_eqs: list[dict[str, JsonValue]] = []
+
+    # A dependent field may reference any user-built GADT. Splice each owner
+    # theory once. Unlike ``extends``, this embeds the actual declarations, so
+    # ``create_theory`` and the typechecker do not depend on a global registry.
+    for gadt in indexed.gadts:
+        gadt_spec = gadt.to_spec()
+        _merge_named(
+            sorts, cast("list[dict[str, JsonValue]]", gadt_spec["sorts"]), "sort"
+        )
+        _merge_named(
+            ops, cast("list[dict[str, JsonValue]]", gadt_spec["ops"]), "operation"
+        )
+        _merge_named(
+            eqs, cast("list[dict[str, JsonValue]]", gadt_spec["eqs"]), "equation"
+        )
+        _merge_named(
+            directed_eqs,
+            cast("list[dict[str, JsonValue]]", gadt_spec["directed_eqs"]),
+            "directed equation",
+        )
 
     # auxiliary sorts/ops contributed by translations: the Model-ref
     # recursive-alias sum sort, and the TaggedUnion sum sort, which is
@@ -148,6 +172,12 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
     seen_aux_ops: set[str] = set()
 
     for fname, spec in field_specs.items():
+        # Every field participating in the dependency telescope is carried as
+        # a parameter of the Model sort. Emitting a projection for one would
+        # introduce an inhabitant of its (possibly Closed) family outside the
+        # family constructor list.
+        if fname in indexed.parameter_names:
+            continue
         aux_sorts, aux_ops = spec.translation.resolve_auxiliary()
         for aux_sort in aux_sorts:
             sort_name = cast("str", aux_sort["name"])
@@ -163,26 +193,57 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
         if spec.translation.inner_kind == "ref":
             # Ref[T] becomes a structural edge from this sort to T's sort
             target_sort = _structural_target(spec.translation, "Ref ")
-            ops.append(_edge_accessor(fname, schema_kind, target_sort, optional))
+            ops.append(
+                _edge_accessor(
+                    fname,
+                    schema_kind,
+                    target_sort,
+                    optional,
+                    indexed.parameters,
+                )
+            )
             continue
         if spec.translation.inner_kind == "embed":
             # Embed[T] becomes a containment edge to T's primary sort.
             # The embedded sort itself is not redeclared here; the target
             # Model's own theory carries it. The containment is structural.
             target_sort = _structural_target(spec.translation, "Embed ")
-            ops.append(_embed_accessor(fname, schema_kind, target_sort, optional))
+            ops.append(
+                _embed_accessor(
+                    fname,
+                    schema_kind,
+                    target_sort,
+                    optional,
+                    indexed.parameters,
+                )
+            )
             continue
         if spec.translation.inner_kind == "sum":
             # A TaggedUnion root, or a Model-ref recursive alias: the sum
             # sort is already in the auxiliary records above, so the field
             # accessor returns it directly (no per-field constraint sort).
             target_sort = _structural_target(spec.translation, "")
-            ops.append(_edge_accessor(fname, schema_kind, target_sort, optional))
+            ops.append(
+                _edge_accessor(
+                    fname,
+                    schema_kind,
+                    target_sort,
+                    optional,
+                    indexed.parameters,
+                )
+            )
             continue
         # constraint sort name follows panproto convention: ParentSort_field
         constraint_sort_name = f"{schema_kind}_{fname}"
         sorts.append(_constraint_sort(constraint_sort_name, spec.translation.sort))
-        ops.append(_field_accessor(fname, schema_kind, constraint_sort_name))
+        ops.append(
+            _field_accessor(
+                fname,
+                schema_kind,
+                constraint_sort_name,
+                indexed.parameters,
+            )
+        )
 
     return {
         "name": schema_kind,
@@ -190,7 +251,7 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
         "sorts": sorts,
         "ops": ops,
         "eqs": eqs,
-        "directed_eqs": [],
+        "directed_eqs": directed_eqs,
         "policies": [],
     }
 
@@ -200,7 +261,9 @@ def _schema_kind(cls: type) -> str:
     return getattr(cls, "__schema_kind__", cls.__name__)
 
 
-def _primary_sort(name: str) -> dict[str, JsonValue]:
+def _primary_sort(
+    name: str, parameters: tuple[tuple[str, SortExpr], ...] = ()
+) -> dict[str, JsonValue]:
     """Build the Sort dict for a model's primary vertex.
 
     Parameters
@@ -210,10 +273,101 @@ def _primary_sort(name: str) -> dict[str, JsonValue]:
     """
     return {
         "name": name,
-        "params": [],
+        "params": [
+            {"name": parameter_name, "sort": sort.to_spec()}
+            for parameter_name, sort in parameters
+        ],
         "kind": "Structural",
         "closure": "Open",
     }
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexedContext:
+    """Dependent Model-sort parameters and the GADTs that define them."""
+
+    parameters: tuple[tuple[str, SortExpr], ...]
+    parameter_names: frozenset[str]
+    gadts: tuple[GADT, ...]
+
+
+def _indexed_context(field_specs: dict[str, FieldSpec]) -> _IndexedContext:
+    """Derive a topologically ordered telescope from indexed field markers."""
+    from didactic.gadt import GADTDeclarationError, Var  # noqa: PLC0415
+    from didactic.gadt._indexed import indexed_marker  # noqa: PLC0415
+
+    parameter_sorts: dict[str, SortExpr] = {}
+    dependencies: dict[str, tuple[str, ...]] = {}
+    owners: list[GADT] = []
+
+    def record(name: str, sort: SortExpr) -> None:
+        previous = parameter_sorts.get(name)
+        if previous is not None and previous != sort:
+            msg = f"index field {name!r} is required at both {previous} and {sort}"
+            raise GADTDeclarationError(msg)
+        parameter_sorts[name] = sort
+
+    for field_name, spec in field_specs.items():
+        marker = indexed_marker(spec)
+        if marker is None:
+            continue
+        if all(owner is not marker.family.owner for owner in owners):
+            owners.append(marker.family.owner)
+        substitution: dict[str, Term] = {}
+        for index_name, family_parameter in zip(
+            marker.index_fields, marker.family.parameters, strict=True
+        ):
+            record(index_name, family_parameter.sort.substitute(substitution))
+            substitution[family_parameter.name] = Var(index_name)
+        record(field_name, marker.sort)
+        dependencies[field_name] = marker.index_fields
+
+    ordered: list[str] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visited:
+            return
+        if name in visiting:
+            raise GADTDeclarationError(
+                f"indexed field dependency cycle contains {name!r}"
+            )
+        visiting.add(name)
+        for dependency in dependencies.get(name, ()):
+            if dependency in parameter_sorts:
+                visit(dependency)
+        visiting.remove(name)
+        visited.add(name)
+        ordered.append(name)
+
+    # Preserve Model declaration order whenever the dependency relation does
+    # not force a different order. This keeps fingerprints deterministic.
+    for field_name in field_specs:
+        if field_name in parameter_sorts:
+            visit(field_name)
+
+    parameters = tuple((name, parameter_sorts[name]) for name in ordered)
+    return _IndexedContext(parameters, frozenset(parameter_sorts), tuple(owners))
+
+
+def _merge_named(
+    target: list[dict[str, JsonValue]],
+    additions: list[dict[str, JsonValue]],
+    kind: str,
+) -> None:
+    """Merge named spec records, accepting equal duplicates only."""
+    by_name = {cast("str", item["name"]): item for item in target}
+    for addition in additions:
+        name = cast("str", addition["name"])
+        previous = by_name.get(name)
+        if previous is not None:
+            if previous != addition:
+                msg = f"conflicting {kind} declarations named {name!r}"
+                raise ValueError(msg)
+            continue
+        target.append(addition)
+        by_name[name] = addition
 
 
 # Map from didactic-side sort names to panproto's ValueKind enum.
@@ -298,7 +452,11 @@ def _structural_target(translation: TypeTranslation, prefix: str) -> str:
 
 
 def _edge_accessor(
-    field_name: str, parent_sort: str, target_sort: str, optional: bool = False
+    field_name: str,
+    parent_sort: str,
+    target_sort: str,
+    optional: bool = False,
+    parameters: tuple[tuple[str, SortExpr], ...] = (),
 ) -> dict[str, JsonValue]:
     """Build an Operation dict for a ``Ref[T]`` edge.
 
@@ -319,7 +477,7 @@ def _edge_accessor(
     """
     op: dict[str, JsonValue] = {
         "name": field_name,
-        "inputs": [["self", parent_sort, "No"]],
+        "inputs": _model_inputs(parent_sort, parameters),
         "output": target_sort,
     }
     if optional:
@@ -328,7 +486,11 @@ def _edge_accessor(
 
 
 def _embed_accessor(
-    field_name: str, parent_sort: str, target_sort: str, optional: bool = False
+    field_name: str,
+    parent_sort: str,
+    target_sort: str,
+    optional: bool = False,
+    parameters: tuple[tuple[str, SortExpr], ...] = (),
 ) -> dict[str, JsonValue]:
     """Build an Operation dict for an ``Embed[T]`` containment edge.
 
@@ -352,7 +514,7 @@ def _embed_accessor(
     """
     op: dict[str, JsonValue] = {
         "name": field_name,
-        "inputs": [["self", parent_sort, "No"]],
+        "inputs": _model_inputs(parent_sort, parameters),
         "output": target_sort,
     }
     if optional:
@@ -361,7 +523,10 @@ def _embed_accessor(
 
 
 def _field_accessor(
-    field_name: str, parent_sort: str, output_sort: str
+    field_name: str,
+    parent_sort: str,
+    output_sort: str,
+    parameters: tuple[tuple[str, SortExpr], ...] = (),
 ) -> dict[str, JsonValue]:
     """Build an Operation dict for one field-accessor.
 
@@ -379,9 +544,26 @@ def _field_accessor(
     """
     return {
         "name": field_name,
-        "inputs": [["self", parent_sort, "No"]],
+        "inputs": _model_inputs(parent_sort, parameters),
         "output": output_sort,
     }
+
+
+def _model_inputs(
+    parent_sort: str, parameters: tuple[tuple[str, SortExpr], ...]
+) -> list[JsonValue]:
+    """Build implicit telescope inputs followed by the explicit model value."""
+    from didactic.gadt import SortExpr, Var  # noqa: PLC0415
+
+    inputs: list[JsonValue] = [
+        [name, sort.to_spec(), "Yes"] for name, sort in parameters
+    ]
+    owner_sort = SortExpr(
+        parent_sort,
+        tuple(Var(name) for name, _ in parameters),
+    )
+    inputs.append(["self", owner_sort.to_spec(), "No"])
+    return inputs
 
 
 # ---------------------------------------------------------------------------
@@ -433,11 +615,15 @@ def build_theory(cls: type) -> panproto.Theory:
     if len(parents) <= 1:
         # single (or no) Model inheritance: the flat spec is correct
         spec = build_theory_spec(cls)
-        return panproto.create_theory(_spec_payload(spec))
+        theory = panproto.create_theory(_spec_payload(spec))
+        panproto.typecheck_theory(theory)
+        return theory
 
     # multiple Model inheritance: compute the colimit of the parent
     # theories over their lowest common ancestor in the Model lineage
-    return _build_colimit_theory(cls, parents)
+    theory = _build_colimit_theory(cls, parents)
+    panproto.typecheck_theory(theory)
+    return theory
 
 
 def _model_parents(cls: type) -> list[type]:

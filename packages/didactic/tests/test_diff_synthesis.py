@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Annotated, Literal, cast
+
 import pytest
 
 import didactic.api as dx
+
+if TYPE_CHECKING:
+    from didactic.types._typing import JsonObject
 
 
 class V1(dx.Model):
@@ -104,3 +109,43 @@ def test_synthesise_with_explicit_stringency() -> None:
     """
     with pytest.raises(Exception):  # noqa: B017
         dx.synthesise_migration(V1, V2, stringency="not_a_real_level")
+
+
+# -- indexed compatibility -------------------------------------------
+
+
+OLD_PAYLOAD = dx.Universe("CompatibilityPayload", text=str, number=float)
+NEW_PAYLOAD = dx.Universe("CompatibilityPayload", text=str, number=int)
+
+
+class IndexedV1(dx.Model):
+    kind: Literal["text", "number"]
+    body: Annotated[str | float, OLD_PAYLOAD.at("kind")]
+
+
+class IndexedV2(dx.Model):
+    kind: Literal["text", "number"]
+    body: Annotated[str | int, NEW_PAYLOAD.at("kind")]
+
+
+def test_diff_reports_changed_indexed_contract() -> None:
+    report = dx.diff(IndexedV1, IndexedV2)
+    indexed = report.get("indexed_changes")
+    assert isinstance(indexed, list)
+    first = cast("JsonObject", indexed[0])
+    change = cast("JsonObject", first["IndexedFamilyChanged"])
+    assert change["field"] == "body"
+
+
+def test_changed_indexed_contract_is_breaking() -> None:
+    report = dx.classify_change(IndexedV1, IndexedV2)
+    assert report["compatible"] is False
+    assert report["classification"] == "breaking"
+    breaking = report.get("breaking")
+    assert isinstance(breaking, list)
+    assert any("IndexedFamilyChanged" in cast("JsonObject", item) for item in breaking)
+
+
+def test_changed_indexed_contract_requires_explicit_migration() -> None:
+    with pytest.raises(ValueError, match="explicit migration"):
+        dx.synthesise_migration(IndexedV1, IndexedV2)

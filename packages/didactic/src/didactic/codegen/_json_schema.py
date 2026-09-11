@@ -24,15 +24,29 @@ didactic.Model.model_json_schema : the conventional entry point.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
+from types import NoneType, UnionType
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Literal,
+    NotRequired,
+    Required,
+    TypedDict,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
+
+from didactic.types._typing import JsonValue
 
 if TYPE_CHECKING:
     from didactic.fields._fields import FieldSpec
     from didactic.models._model import Model
-    from didactic.types._typing import JsonValue, Opaque
+    from didactic.types._typing import Opaque
 
 
-class JsonSchemaProperty(TypedDict):
+class JsonSchemaProperty(TypedDict, total=False):
     """A single per-field entry in a JSON Schema document.
 
     ``type`` is always present (every field has a JSON Schema type);
@@ -43,18 +57,26 @@ class JsonSchemaProperty(TypedDict):
     type at the boundary so dynamic extras still work at runtime.
     """
 
-    type: str
-    format: NotRequired[str]
-    description: NotRequired[str]
-    examples: NotRequired[list[JsonValue]]
-    deprecated: NotRequired[bool]
-    minimum: NotRequired[JsonValue]
-    maximum: NotRequired[JsonValue]
-    exclusiveMinimum: NotRequired[JsonValue]
-    exclusiveMaximum: NotRequired[JsonValue]
-    minLength: NotRequired[int]
-    maxLength: NotRequired[int]
-    multipleOf: NotRequired[JsonValue]
+    type: Required[str]
+    format: str
+    description: str
+    examples: list[JsonValue]
+    deprecated: bool
+    minimum: JsonValue
+    maximum: JsonValue
+    exclusiveMinimum: JsonValue
+    exclusiveMaximum: JsonValue
+    minLength: int
+    maxLength: int
+    multipleOf: JsonValue
+    const: JsonValue
+    enum: list[JsonValue]
+    anyOf: list[JsonSchemaProperty]
+    items: JsonSchemaProperty
+    prefixItems: list[JsonSchemaProperty]
+    minItems: int
+    maxItems: int
+    x_didactic_indexed_family: str
 
 
 # ``$schema`` has a leading ``$`` so the alternative TypedDict
@@ -69,6 +91,7 @@ JsonSchemaDoc = TypedDict(
         "properties": dict[str, JsonSchemaProperty],
         "description": NotRequired[str],
         "required": NotRequired[list[str]],
+        "allOf": NotRequired[list[dict[str, JsonValue]]],
     },
 )
 
@@ -129,6 +152,9 @@ def json_schema_of(cls: type[Model]) -> JsonSchemaDoc:
         schema["description"] = cls.__doc__.strip()
     if required:
         schema["required"] = required
+    conditions = _indexed_conditions(cls)
+    if conditions:
+        schema["allOf"] = conditions
     return schema
 
 
@@ -141,18 +167,9 @@ def _schema_for_field(spec: FieldSpec) -> JsonSchemaProperty:
     though the TypedDict only enumerates the documented set.
     """
     annotation = spec.annotation
-    out: dict[str, JsonValue] = {}
-
-    # The map is keyed on bare ``type`` instances (``str``, ``int``,
-    # etc.); ``TypeVar`` / ``ForwardRef`` annotations fall through to
-    # the ``("string", None)`` default.
-    if isinstance(annotation, type):
-        type_str, format_str = _PRIMITIVE_TYPE_MAP.get(annotation, ("string", None))
-    else:
-        type_str, format_str = "string", None
-    out["type"] = type_str
-    if format_str is not None:
-        out["format"] = format_str
+    if get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    out = cast("dict[str, JsonValue]", dict(_schema_for_annotation(annotation)))
 
     if spec.description:
         out["description"] = spec.description
@@ -180,6 +197,93 @@ def _schema_for_field(spec: FieldSpec) -> JsonSchemaProperty:
             _apply_annotated_constraint(out, entry)
 
     return cast("JsonSchemaProperty", out)
+
+
+def _indexed_conditions(cls: type[Model]) -> list[dict[str, JsonValue]]:
+    """Emit conditional schemas that preserve each indexed dependency."""
+    from didactic.gadt._indexed import indexed_marker  # noqa: PLC0415
+
+    conditions: list[dict[str, JsonValue]] = []
+    for field_name, field_spec in cls.__field_specs__.items():
+        marker = indexed_marker(field_spec)
+        if marker is None:
+            continue
+        for case_number, (indices, annotation) in enumerate(marker.cases):
+            index_properties: dict[str, JsonValue] = {}
+            labels = marker.case_labels[case_number] if marker.case_labels else None
+            for index_number, (index_name, index_term) in enumerate(
+                zip(marker.index_fields, indices, strict=True)
+            ):
+                value = (
+                    labels[index_number]
+                    if labels is not None
+                    else _index_json(index_term)
+                )
+                index_properties[index_name] = {"const": value}
+            conditions.append(
+                {
+                    "if": {
+                        "properties": index_properties,
+                        "required": list(marker.index_fields),
+                    },
+                    "then": {
+                        "properties": {
+                            field_name: cast(
+                                "JsonValue", _schema_for_annotation(annotation)
+                            )
+                        }
+                    },
+                }
+            )
+    return conditions
+
+
+def _index_json(term: object) -> JsonValue:
+    """Flatten a nullary code to its discriminator and preserve other terms."""
+    from didactic.gadt import App, Term  # noqa: PLC0415
+
+    if isinstance(term, App) and not term.args:
+        return term.op
+    if isinstance(term, Term):
+        return term.to_spec()
+    raise TypeError(f"index case must be a GADT Term, got {type(term).__name__}")
+
+
+def _schema_for_annotation(annotation: object) -> JsonSchemaProperty:
+    """Translate the Python shapes admitted by indexed payload cases."""
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _schema_for_annotation(get_args(annotation)[0])
+    if annotation is NoneType:
+        return JsonSchemaProperty(type="null")
+    if isinstance(annotation, type):
+        type_str, format_str = _PRIMITIVE_TYPE_MAP.get(annotation, ("string", None))
+        result = JsonSchemaProperty(type=type_str)
+        if format_str is not None:
+            result["format"] = format_str
+        return result
+    args = get_args(annotation)
+    if origin in {Union, UnionType}:
+        return cast(
+            "JsonSchemaProperty",
+            {"anyOf": [_schema_for_annotation(item) for item in args]},
+        )
+    if origin is Literal:
+        values = cast("tuple[JsonValue, ...]", args)
+        return cast("JsonSchemaProperty", {"enum": list(values)})
+    if origin is tuple:
+        if len(args) == 2 and args[1] is Ellipsis:
+            return JsonSchemaProperty(
+                type="array",
+                items=_schema_for_annotation(args[0]),
+            )
+        return JsonSchemaProperty(
+            type="array",
+            prefixItems=[_schema_for_annotation(item) for item in args],
+            minItems=len(args),
+            maxItems=len(args),
+        )
+    return JsonSchemaProperty(type="string")
 
 
 def _apply_annotated_constraint(out: dict[str, JsonValue], marker: Opaque) -> None:

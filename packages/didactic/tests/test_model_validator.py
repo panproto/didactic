@@ -40,6 +40,12 @@ def test_model_validator_failure_surfaces_as_validation_error() -> None:
     assert "length" in entry.msg
 
 
+def test_immutable_update_rechecks_model_validator() -> None:
+    rules = _Rules(binary_rules=("a",), binary_weights=(1.0,))
+    with pytest.raises(dx.ValidationError, match="length"):
+        rules.with_(binary_rules=("a", "b"))
+
+
 def test_invalid_mode_rejected_at_decoration_time() -> None:
     with pytest.raises(ValueError, match="only accepts 'after'"):
         dx.model_validator(mode="before")
@@ -126,6 +132,13 @@ def test_axiom_failure_surfaces_before_model_validator_runs() -> None:
     types = {e.type for e in exc.value.entries}
     assert "axiom_failed" in types
     assert "validator_error" not in types
+
+
+def test_immutable_update_rechecks_axioms() -> None:
+    ordered = _Ordered(low=0, high=10)
+    with pytest.raises(dx.ValidationError) as exc:
+        ordered.with_(low=20)
+    assert exc.value.entries[0].type == "axiom_failed"
 
 
 # -- the issue's repro shape -----------------------------------------

@@ -96,6 +96,17 @@ def synthesise_migration(
     """
     import panproto  # noqa: PLC0415
 
+    from didactic.gadt._compat import indexed_changes  # noqa: PLC0415
+
+    changes = indexed_changes(source, target)
+    if changes:
+        msg = (
+            "automatic migration synthesis cannot choose coercions for changed "
+            "indexed families; register an explicit migration that preserves or "
+            "transforms the indices"
+        )
+        raise ValueError(msg)
+
     from didactic.vcs._repo import schema_from_model  # noqa: PLC0415
 
     src_schema = schema_from_model(source)

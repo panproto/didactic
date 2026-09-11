@@ -59,6 +59,24 @@ def test_converter_runs_on_with_() -> None:
     assert m2.name == "bob"
 
 
+def test_with_does_not_rerun_converter_on_unchanged_fields() -> None:
+    calls: list[str] = []
+
+    def mark(value: FieldValue) -> str:
+        assert isinstance(value, str)
+        calls.append(value)
+        return f"{value}!"
+
+    class ConvertedPair(dx.Model):
+        stable: str = dx.field(converter=mark)
+        changed: int
+
+    original = ConvertedPair(stable="once", changed=1)
+    updated = original.with_(changed=2)
+    assert updated.stable == "once!"
+    assert calls == ["once"]
+
+
 def test_converter_runs_on_default() -> None:
     # default for `count` is 0 (already int); converter is the identity here
     m = WithConverter(name="alice")
