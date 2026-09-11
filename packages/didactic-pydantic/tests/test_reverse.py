@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import BaseModel
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 import didactic.api as dx
 from didactic.pydantic import from_pydantic, to_pydantic
@@ -200,3 +202,32 @@ def test_computed_fields_are_skipped() -> None:
     PydUser = to_pydantic(User)
     assert "full_name" not in PydUser.model_fields
     assert set(PydUser.model_fields.keys()) == {"first", "last"}
+
+
+# -- indexed families --------------------------------------------------
+
+
+PYDANTIC_PAYLOAD = dx.Universe("PydanticPayload", text=str, measurement=float)
+
+
+class IndexedPayload(dx.Model):
+    kind: Literal["text", "measurement"]
+    body: Annotated[str | float, PYDANTIC_PAYLOAD.at("kind")]
+
+
+def test_indexed_family_validator_carries_through() -> None:
+    PydPayload = to_pydantic(IndexedPayload)
+    assert PydPayload(kind="text", body="hello").model_dump() == {
+        "kind": "text",
+        "body": "hello",
+    }
+
+    with pytest.raises(PydanticValidationError, match="does not inhabit"):
+        PydPayload(kind="measurement", body="not a number")
+
+
+def test_indexed_family_schema_conditions_carry_through() -> None:
+    schema = to_pydantic(IndexedPayload).model_json_schema()
+    expected = IndexedPayload.model_json_schema().get("allOf")
+    assert expected is not None
+    assert schema["allOf"] == expected
