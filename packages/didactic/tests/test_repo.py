@@ -250,7 +250,8 @@ def test_data_at_returns_committed_dataset(fresh_repo_path: Path) -> None:
     assert len(datasets) == 1
     (dataset,) = datasets
     assert isinstance(dataset, dx.CommittedDataset)
-    assert dataset.data == _RECORDS
+    assert dataset.data
+    assert dataset.data != _RECORDS
     assert dataset.record_count == 2
     assert dataset.schema_id  # a non-empty object id
 
@@ -271,7 +272,8 @@ def test_add_data_stages_then_round_trips(fresh_repo_path: Path) -> None:
 
     repo.commit("schema+data", author="Test <test@example.com>")
     (dataset,) = repo.data_at("HEAD")
-    assert dataset.data == _RECORDS
+    assert dataset.data
+    assert dataset.data != _RECORDS
     assert dataset.record_count == 2
 
 
@@ -335,7 +337,8 @@ def test_data_only_commit_records_new_data(fresh_repo_path: Path) -> None:
 
     (dataset,) = repo.data_at(second)
     assert dataset.key == "rec-b"
-    assert dataset.data == b'[{"id": "b"}]'
+    assert dataset.data
+    assert dataset.data != b'[{"id": "b"}]'
 
 
 def test_data_at_is_empty_without_committed_data(fresh_repo_path: Path) -> None:

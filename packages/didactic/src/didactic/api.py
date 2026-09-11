@@ -40,6 +40,13 @@ from didactic._self_describing import (
     validate_with_uri_lookup,
 )
 from didactic.axioms._axioms import Axiom, axiom
+from didactic.extensions import (
+    ExtensionLowerer,
+    LoweringRoute,
+    UnsupportedLoweringRouteError,
+    lower_checked,
+    supports_lowering,
+)
 from didactic.fields._computed import computed
 from didactic.fields._derived import derived
 from didactic.fields._fields import Field, FieldSpec, field
@@ -79,7 +86,7 @@ from didactic.types import _types_lib as types
 from didactic.vcs._backref import ModelPool, resolve_backrefs
 from didactic.vcs._repo import CommittedDataset, Repository
 
-__version__ = "0.13.1"
+__version__ = "0.14.0"
 
 #: Conventional namespace for lens utilities (`dx.lens.identity(...)`,
 #: `dx.lens.Lens`, etc.). The ``lens`` name doubles as a decorator
@@ -95,12 +102,14 @@ __all__ = [
     "Correspondence",
     "DependentLens",
     "Embed",
+    "ExtensionLowerer",
     "ExtraPolicy",
     "Field",
     "FieldSpec",
     "FingerprintRegistry",
     "Iso",
     "Lens",
+    "LoweringRoute",
     "Mapping",
     "Model",
     "ModelConfig",
@@ -111,6 +120,7 @@ __all__ = [
     "SynthesisResult",
     "TaggedUnion",
     "TypeAdapter",
+    "UnsupportedLoweringRouteError",
     "ValidationError",
     "ValidationErrorEntry",
     "__version__",
@@ -127,6 +137,7 @@ __all__ = [
     "is_breaking_change",
     "lens",
     "load_registry",
+    "lower_checked",
     "migrate",
     "model_from_spec",
     "model_from_theory",
@@ -136,6 +147,7 @@ __all__ = [
     "resolve_backrefs",
     "save_registry",
     "schema_uri",
+    "supports_lowering",
     "synthesis",
     "synthesise_migration",
     "testing",

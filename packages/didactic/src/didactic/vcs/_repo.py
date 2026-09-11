@@ -57,8 +57,10 @@ class CommittedDataset:
         Object id of the schema the dataset was validated against when
         it was committed.
     data
-        The raw committed bytes, exactly as staged (typically
-        content-addressed JSON).
+        Panproto's canonical MessagePack encoding of the checked
+        ``WInstance`` records. This is not the source file's JSON text:
+        staging parses and validates each record before it enters the
+        content-addressed store.
     record_count
         Number of records panproto counted in ``data`` at commit time.
     key
@@ -260,11 +262,11 @@ class Repository:
 
         A read-only accessor for committed content: it resolves
         ``ref``, loads the datasets recorded at that revision, and
-        returns their bytes, leaving HEAD and the working tree
-        untouched. This is the data-side counterpart to panproto's
-        committed-schema lookup, so a downstream can reconstruct the
-        record set at an arbitrary revision, for example to diff two
-        revisions, without checking it out.
+        returns their canonical Panproto encodings, leaving HEAD and the
+        working tree untouched. This is the data-side counterpart to
+        panproto's committed-schema lookup, so a downstream can identify
+        and migrate the checked record set at an arbitrary revision
+        without checking it out.
 
         Parameters
         ----------
@@ -315,9 +317,10 @@ class Repository:
     def add_data(self, path: str | PathLike[str], *, key: str | None = None) -> None:
         """Stage a data file for the next commit.
 
-        Reads the file at ``path`` and stages its contents as a dataset
-        bound to the staged schema, or to HEAD's schema when no schema
-        is staged. The staged data is flushed by the next
+        Reads the file at ``path``, parses and validates its records, and
+        stages their canonical Panproto instances as a dataset bound to
+        the staged schema, or to HEAD's schema when no schema is staged.
+        The staged data is flushed by the next
         [commit][didactic.api.Repository.commit] and is then readable at
         that revision through
         [data_at][didactic.api.Repository.data_at]. This is the
@@ -326,9 +329,9 @@ class Repository:
         Parameters
         ----------
         path
-            Filesystem path to the data file to stage. The file is read
-            immediately and its contents are captured into the
-            repository's object store.
+            Filesystem path to the JSON data file to stage. The file is
+            read immediately; its records are checked against the active
+            schema and captured in the repository's canonical encoding.
         key
             Identifier to record for the dataset, surfaced as
             [CommittedDataset.key][didactic.api.CommittedDataset]. A

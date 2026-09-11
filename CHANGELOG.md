@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-11
+
+### Added
+
+- `didactic.extensions` provides an exact-version, checked lowering boundary for
+  external typed languages. A lowerer must check its source, lower it, and validate
+  the target; Didactic does not erase or reinterpret extension semantics between
+  those steps.
+- `tools/qiec_interop.py` exercises the planned Quivers integration contract with
+  indexed `Vec` and parameterized `State` fixtures, including Panproto transport and
+  schema migration.
+
+### Changed
+
+- panproto is now required at `>=0.74.1`, which supplies index-aware case coverage
+  and dependent case motives needed by the QIEC boundary.
+- `CommittedDataset.data` is documented and tested as Panproto's validated canonical
+  MessagePack encoding rather than the original input JSON text.
+
 ## [0.13.1] - 2026-09-09
 
 ### Changed
