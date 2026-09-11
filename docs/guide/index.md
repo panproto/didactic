@@ -25,6 +25,8 @@ specific question of the form "how do I do X with didactic".
 - [Generic Models](generics.md) covers PEP 695 generic class syntax,
   the `Generic[T]` mixin, subscript synthesis, default propagation,
   and substitution through nested generic shapes.
+- [GADTs and indexed families](gadts.md) covers arbitrary dependent
+  families, constructors, motives, eliminators, and indexed Model fields.
 
 ## Validation
 
