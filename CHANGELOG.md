@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-11
+
+### Added
+
+- `dx.GADT` declares arbitrary first-order indexed families, constructors with
+  refined result indices, dependent motives, user-defined eliminators,
+  equations, and directed rewrites. Its immutable term AST covers variables,
+  applications, holes, lets, and cases with capture-avoiding substitution and
+  canonical JSON transport.
+- `dx.Universe` and `dx.indexed_by` connect dependent families to `Model`
+  fields. Construction, JSON validation, and immutable updates reject a
+  payload whose type or symbolic sort does not match its stored indices.
+- Indexed models emit dependent Model-sort telescopes and include their GADT
+  declarations in the generated Panproto theory. JSON Schema, Pydantic, and
+  FastAPI preserve known index cases as conditional schemas and cross-field
+  validators.
+- The GADT test suite covers dependent heterogeneous telescopes, index-refined
+  case coverage, wrong and unreachable branches, branch-local skolem escape,
+  morphism index preservation, colimits, serialization, capture avoidance,
+  rewrite fuel, and property-based round trips.
+
+### Changed
+
+- `Model.with_()` reconstructs through the normal validation path, so field
+  validators, class axioms, and indexed invariants are rechecked atomically.
+- Compatibility reports classify any changed indexed contract as breaking.
+  Automatic migration synthesis now requires an explicit migration when a
+  family's indices, cases, theory, or Python carriers change.
+- Inbound Model synthesis fails closed on an indexed primary sort because a
+  Panproto Theory does not retain the Python carrier annotations required to
+  reconstruct `IndexedBy` validation.
+- All four distributions and runtime version constants are now `0.15.0`.
+
 ## [0.14.0] - 2026-09-11
 
 ### Added
