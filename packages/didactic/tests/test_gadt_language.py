@@ -354,6 +354,47 @@ def test_implicit_index_is_inferred_from_explicit_argument() -> None:
     panproto.typecheck_theory(theory.compile())
 
 
+def test_eliminator_equation_infers_implicit_index() -> None:
+    theory = dx.GADT("ImplicitEliminator")
+    nat = theory.sort("IENat", closed=True)
+    element = theory.sort("IEElement")
+    vector = theory.family(
+        "IEVec", parameters=(dx.param("length", nat()),), closed=True
+    )
+    zero = theory.constructor("iezero", result=nat())
+    succ = theory.constructor("iesucc", inputs=(dx.param("n", nat()),), result=nat())
+    nil = theory.constructor("ienil", result=vector(zero()))
+    first = theory.operation("iefirst", result=element())
+    cons = theory.constructor(
+        "iecons",
+        inputs=(
+            dx.param("n", nat(), implicit=True),
+            dx.param("value", element()),
+            dx.param("tail", vector(dx.var("n"))),
+        ),
+        result=vector(succ(dx.var("n"))),
+    )
+    head = theory.eliminator(
+        "iehead",
+        inputs=(
+            dx.param("n", nat(), implicit=True),
+            dx.param("vector", vector(succ(dx.var("n")))),
+        ),
+        motive=element(),
+    )
+    head.define(
+        dx.case(
+            dx.var("vector"),
+            dx.branch("iecons", "m", "value", "tail", body=dx.var("value")),
+        )
+    )
+
+    term = head(cons(first(), nil()))
+    assert theory.infer_sort(term) == element()
+    assert theory.normalize(term) == first()
+    panproto.typecheck_theory(theory.compile())
+
+
 def test_compile_seals_the_language() -> None:
     theory = dx.GADT("Sealed")
     sort = theory.sort("SealedSort")

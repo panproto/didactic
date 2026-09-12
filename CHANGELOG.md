@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.15.0] - 2026-09-11
+## [0.15.0] - 2026-09-12
 
 ### Added
 
@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- panproto is now required at `>=0.74.2`. This preserves historical object
+  identities across schema migrations and permits defining equations for
+  eliminators whose family indices are inferred from explicit arguments.
 - `Model.with_()` reconstructs through the normal validation path, so field
   validators, class axioms, and indexed invariants are rechecked atomically.
 - Compatibility reports classify any changed indexed contract as breaking.

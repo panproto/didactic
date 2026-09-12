@@ -22,7 +22,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "panproto>=0.74.1",
+    "panproto>=0.74.2",
     "annotated-types>=0.7",
 ]
 
