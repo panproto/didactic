@@ -16,6 +16,8 @@ parameter list.
 - [Computed](computed.md), [Derived](derived.md).
 - [Axioms](axioms.md): `Axiom`, `axiom`, `check_class_axioms`.
 - [Types](types.md): `EmailStr`, `HttpUrl`, `SecretStr`, `Json`.
+- [GADTs and indexed families](gadt.md): declarations, terms, motives,
+  eliminators, `Universe`, and `IndexedBy`.
 
 ## Schema evolution
 

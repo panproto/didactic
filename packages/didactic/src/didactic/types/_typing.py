@@ -26,6 +26,8 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, ForwardRef, Protocol, runtime_checkable
 from uuid import UUID
 
+from didactic.gadt._ast import Term
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -100,6 +102,7 @@ type FieldValue = (
     | frozenset[FieldValue]
     | Mapping[str, FieldValue]
     | Model
+    | Term
 )
 
 # ---------------------------------------------------------------------------

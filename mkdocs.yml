@@ -83,6 +83,7 @@ nav:
     - Axioms: guide/axioms.md
     - Inheritance: guide/inheritance.md
     - Generic Models: guide/generics.md
+    - GADTs and indexed families: guide/gadts.md
     - Lenses: guide/lenses.md
     - Migrations: guide/migrations.md
     - Schema diff: guide/diff.md
@@ -121,6 +122,7 @@ nav:
     - Theory bridge: reference/theory.md
     - Fingerprints: reference/fingerprint.md
     - Types: reference/types.md
+    - GADTs and indexed families: reference/gadt.md
     - Root models and adapters: reference/root-model.md
     - Testing: reference/testing.md
     - Pydantic adapter: reference/pydantic-adapter.md

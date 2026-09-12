@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     import panproto
 
     from didactic.axioms._axioms import Axiom
+    from didactic.models._model import Model
     from didactic.types._typing import (
         DefaultOrMissing,
         FieldValue,
@@ -454,6 +455,12 @@ class ModelMeta(type):
         # placeholder for the cached panproto.Theory; populated lazily
         # by the `__theory__` property the metaclass exposes below.
         cls.__theory_cache__ = None
+
+        from didactic.gadt._indexed import (  # noqa: PLC0415
+            validate_model_index_declarations,
+        )
+
+        validate_model_index_declarations(cast("type[Model]", cls))
 
         # Strip field defaults from the class dict. Class attributes
         # shadow ``__getattr__`` during normal lookup, so leaving the

@@ -49,13 +49,14 @@ from typing import TYPE_CHECKING, Annotated, cast
 
 import didactic.api as dx
 from didactic.fields._fields import MISSING
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from didactic.fields._fields import FieldSpec
     from didactic.types._typing import FieldValue, Opaque
+    from pydantic.config import JsonDict, JsonValue
     from pydantic.fields import FieldInfo
 
     type _FieldKwargValue = (
@@ -144,9 +145,12 @@ def to_pydantic(
     # idiom for dynamic model creation). The cast widens the call
     # site to ``Callable[..., type[BaseModel]]`` so the splat checks.
     creator = cast("Callable[..., type[BaseModel]]", create_model)
+    validators = _indexed_validators(dx_cls)
+    config = ConfigDict(json_schema_extra=_schema_extra(dx_cls))
     return creator(
         target_name,
-        __base__=BaseModel,
+        __config__=config,
+        __validators__=validators,
         __module__=dx_cls.__module__,
         __doc__=dx_cls.__doc__,
         **fields,
@@ -224,7 +228,7 @@ def _to_pydantic_field(spec: FieldSpec) -> FieldInfo:
     extras = {
         k: cast("FieldValue", v)
         for k, v in spec.extras.items()
-        if k != "annotated_metadata"
+        if k not in {"IndexedBy", "annotated_metadata"}
     }
     if extras:
         kwargs["json_schema_extra"] = extras
@@ -237,6 +241,49 @@ def _to_pydantic_field(spec: FieldSpec) -> FieldInfo:
     # matches Pydantic's runtime contract (returns a ``FieldInfo``).
     field_factory = cast("Callable[..., FieldInfo]", Field)
     return field_factory(**kwargs)
+
+
+def _indexed_validators(
+    dx_cls: type[dx.Model],
+) -> dict[str, Opaque]:
+    """Build a Pydantic model validator for Didactic indexed fields."""
+    from didactic.gadt._indexed import indexed_marker  # noqa: PLC0415
+
+    marked = tuple(
+        (field_name, marker)
+        for field_name, spec in dx_cls.__field_specs__.items()
+        if (marker := indexed_marker(spec)) is not None
+    )
+    if not marked:
+        return {}
+
+    def validate_indices(instance: BaseModel) -> BaseModel:
+        values = cast("dict[str, FieldValue]", instance.__dict__)
+        failures: list[str] = []
+        for field_name, marker in marked:
+            try:
+                marker.validate(values, values[field_name])
+            except (TypeError, ValueError, dx.GADTDeclarationError) as exc:
+                failures.append(f"{field_name}: {exc}")
+        if failures:
+            raise ValueError("; ".join(failures))
+        return instance
+
+    decorated = model_validator(mode="after")(validate_indices)
+    return {"_didactic_indexed_fields": cast("Opaque", decorated)}
+
+
+def _schema_extra(
+    dx_cls: type[dx.Model],
+) -> Callable[[JsonDict], None]:
+    """Copy Didactic's dependent JSON Schema conditions to Pydantic."""
+
+    def update(schema: JsonDict) -> None:
+        dependent = dx_cls.model_json_schema().get("allOf")
+        if dependent:
+            schema["allOf"] = cast("JsonValue", dependent)
+
+    return update
 
 
 __all__ = ["to_pydantic"]

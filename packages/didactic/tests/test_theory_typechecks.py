@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 from uuid import UUID
 
 import panproto
@@ -100,6 +100,14 @@ class Enums(dx.Model):
     choice: Literal["a", "b"] = "a"
 
 
+TYPECHECK_PAYLOAD = dx.Universe("TypecheckPayload", text=str, number=float)
+
+
+class Indexed(dx.Model):
+    kind: Literal["text", "number"]
+    body: Annotated[str | float, TYPECHECK_PAYLOAD.at("kind")]
+
+
 MODELS: list[type[dx.Model]] = [
     Target,
     Scalars,
@@ -108,6 +116,7 @@ MODELS: list[type[dx.Model]] = [
     Edges,
     Unions,
     Enums,
+    Indexed,
     Red,
     Blue,
 ]

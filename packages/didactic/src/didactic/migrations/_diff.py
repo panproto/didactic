@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from didactic.models._model import Model
-    from didactic.types._typing import JsonObject
+    from didactic.types._typing import JsonObject, JsonValue
 
 
 def diff(old: type[Model], new: type[Model]) -> JsonObject:
@@ -61,7 +61,13 @@ def diff(old: type[Model], new: type[Model]) -> JsonObject:
     old_schema = schema_from_model(old)
     new_schema = schema_from_model(new)
     schema_diff = panproto.diff_schemas(old_schema, new_schema)
-    return cast("JsonObject", schema_diff.to_dict())
+    result = cast("JsonObject", schema_diff.to_dict())
+    from didactic.gadt._compat import indexed_changes  # noqa: PLC0415
+
+    changes = indexed_changes(old, new)
+    if changes:
+        result["indexed_changes"] = cast("JsonValue", changes)
+    return result
 
 
 def classify_change(old: type[Model], new: type[Model]) -> JsonObject:
@@ -112,7 +118,19 @@ def classify_change(old: type[Model], new: type[Model]) -> JsonObject:
     # panproto's ``to_dict`` is typed with panproto's own recursive
     # ``JsonValue`` alias; narrow to didactic's structurally-identical
     # ``JsonObject`` at the boundary (the same bridge ``diff`` uses).
-    return cast("JsonObject", compat.to_dict())
+    result = cast("JsonObject", compat.to_dict())
+    from didactic.gadt._compat import indexed_changes  # noqa: PLC0415
+
+    changes = indexed_changes(old, new)
+    if changes:
+        breaking = result.get("breaking")
+        if not isinstance(breaking, list):
+            breaking = []
+            result["breaking"] = breaking
+        breaking.extend(cast("list[JsonValue]", changes))
+        result["compatible"] = False
+        result["classification"] = "breaking"
+    return result
 
 
 def is_breaking_change(old: type[Model], new: type[Model]) -> bool:

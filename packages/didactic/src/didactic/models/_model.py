@@ -52,6 +52,7 @@ from didactic.fields._validators import (
     ValidationError,
     ValidationErrorEntry,
 )
+from didactic.gadt._ast import Term
 from didactic.models._meta import ModelMeta, read_class_annotations
 from didactic.models._storage import DictStorage
 
@@ -248,6 +249,13 @@ class Model(metaclass=ModelMeta):
         object.__setattr__(self, "_derived_cache", {})
         object.__setattr__(self, "_opaque_storage", opaque_storage)
 
+        self._validate_instance()
+
+    def _validate_instance(self) -> None:
+        """Run every invariant that depends on the complete Model value."""
+        cls = type(self)
+        specs = cls.__field_specs__
+
         # axiom enforcement: each class-level axiom is parsed via
         # panproto.parse_expr and evaluated against the field environment
         if cls.__class_axioms__:
@@ -289,6 +297,23 @@ class Model(metaclass=ModelMeta):
                     )
             if model_errors:
                 raise ValidationError(entries=tuple(model_errors), model=cls)
+
+        # Indexed-family checks run after every field and user validator, when
+        # all sibling indices are available. They remain a distinct error kind
+        # so callers can separate dependent-type failures from scalar parsing.
+        from didactic.gadt._indexed import validate_model_indices  # noqa: PLC0415
+
+        indexed_failures = validate_model_indices(self)
+        if indexed_failures:
+            indexed_errors = tuple(
+                ValidationErrorEntry(
+                    loc=(field_name,),
+                    type="index_mismatch",
+                    msg=message,
+                )
+                for field_name, message in indexed_failures
+            )
+            raise ValidationError(entries=indexed_errors, model=cls)
 
     # -- attribute access ---------------------------------------------------
 
@@ -390,12 +415,12 @@ class Model(metaclass=ModelMeta):
         new_storage = self._storage.replaced(encoded)
         new = cls.__new__(cls)
         object.__setattr__(new, "_storage", new_storage)
-        # carry the existing opaque-storage forward, then apply overrides
         old_opaque = cast("dict[str, object]", self._opaque_storage)
         new_opaque = dict(old_opaque)
         new_opaque.update(opaque_overrides)
         object.__setattr__(new, "_opaque_storage", new_opaque)
         object.__setattr__(new, "_derived_cache", {})
+        new._validate_instance()
         return new
 
     # -- serialisation ------------------------------------------------------
@@ -1090,6 +1115,8 @@ def _to_json_safe(value: FieldValue | JsonValue) -> JsonValue:
         return str(value)
     if isinstance(value, enum.Enum):
         return cast("JsonValue", value.value)
+    if isinstance(value, Term):
+        return value.to_spec()
     if isinstance(value, Model):
         # embedded sub-model; recurse into its model_dump shape
         return _to_json_safe(value.model_dump())

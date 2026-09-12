@@ -2017,6 +2017,14 @@ def classify(typ: TypeForm) -> TypeTranslation:
             from_json=inner.from_json,
         )
 
+    # Symbolic GADT terms are a first-class wire value. They encode as the
+    # same tagged JSON AST passed to Panproto, which makes an arbitrary index
+    # round-trip without reducing it to a display string.
+    from didactic.gadt._ast import Term  # noqa: PLC0415
+
+    if typ is Term:
+        return _gadt_term_translation()
+
     # T | None; unwrap a single Optional layer
     inner_type, was_optional = _strip_optional(typ)
     if was_optional:
@@ -2103,6 +2111,32 @@ def classify(typ: TypeForm) -> TypeTranslation:
 
     msg = f"Type {typ!r} is not (yet) translatable to a panproto sort."
     raise TypeNotSupportedError(msg)
+
+
+def _gadt_term_translation() -> TypeTranslation:
+    """Build the lossless JSON translation for :class:`didactic.gadt.Term`."""
+    from didactic.gadt._ast import Term, term_from_spec  # noqa: PLC0415
+
+    def encode(value: FieldValue) -> Encoded:
+        if not isinstance(value, Term):
+            msg = f"expected a GADT Term, got {type(value).__name__}"
+            raise TypeError(msg)
+        return json.dumps(value.to_spec(), sort_keys=True, separators=(",", ":"))
+
+    def decode(value: Encoded) -> FieldValue:
+        payload = cast("JsonValue", json.loads(value))
+        return term_from_spec(payload)
+
+    def from_json(value: JsonValue) -> FieldValue:
+        return term_from_spec(value)
+
+    return TypeTranslation(
+        sort="GATTerm",
+        encode=encode,
+        decode=decode,
+        inner_kind="gadt_term",
+        from_json=from_json,
+    )
 
 
 def _paren(sort: str) -> str:

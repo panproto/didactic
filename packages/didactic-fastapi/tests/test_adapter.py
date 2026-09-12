@@ -4,6 +4,8 @@
 # fields dynamically; pyright can't see them.
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 import didactic.api as dx
 from didactic.fastapi import as_request, as_response
 
@@ -11,6 +13,14 @@ from didactic.fastapi import as_request, as_response
 class User(dx.Model):
     id: str
     email: str
+
+
+FASTAPI_PAYLOAD = dx.Universe("FastApiPayload", text=str, number=float)
+
+
+class IndexedRecord(dx.Model):
+    kind: Literal["text", "number"]
+    body: Annotated[str | float, FASTAPI_PAYLOAD.at("kind")]
 
 
 def test_as_request_returns_pydantic_class() -> None:
@@ -42,3 +52,22 @@ def test_validation_handler_installation() -> None:
     register_validation_handler(app)
     # the handler should now be present in app.exception_handlers
     assert dx.ValidationError in app.exception_handlers
+
+
+def test_openapi_preserves_indexed_family_conditions() -> None:
+    """FastAPI publishes the same dependent cases as Didactic."""
+    from fastapi import FastAPI
+
+    request_model = as_request(IndexedRecord)
+    app = FastAPI()
+
+    async def create_record(body: object) -> object:
+        return body
+
+    create_record.__annotations__["body"] = request_model
+    app.post("/records")(create_record)
+
+    schema = app.openapi()["components"]["schemas"]["IndexedRecord"]
+    expected = IndexedRecord.model_json_schema().get("allOf")
+    assert expected is not None
+    assert schema["allOf"] == expected
