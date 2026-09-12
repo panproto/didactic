@@ -1,14 +1,14 @@
 # didactic-pydantic
 
-*Bidirectional adapter between `pydantic.BaseModel` and `dx.Model`.*
-
 [![PyPI](https://img.shields.io/pypi/v/didactic-pydantic?style=flat-square&color=blue)](https://pypi.org/project/didactic-pydantic/)
 [![Python](https://img.shields.io/pypi/pyversions/didactic-pydantic?style=flat-square)](https://pypi.org/project/didactic-pydantic/)
 [![License](https://img.shields.io/pypi/l/didactic-pydantic?style=flat-square&color=green)](https://github.com/panproto/didactic/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/panproto/didactic/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/panproto/didactic/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-panproto.dev-blue?style=flat-square)](https://panproto.dev/didactic/guide/pydantic/)
 
-Contributes `didactic.pydantic` to the namespace package.
+`didactic-pydantic` converts models between `pydantic.BaseModel` and
+`didactic.api.Model`. It adds the `didactic.pydantic` module and supports
+applications that need both model systems during a migration.
 
 ## Install
 
@@ -16,38 +16,35 @@ Contributes `didactic.pydantic` to the namespace package.
 pip install didactic-pydantic
 ```
 
-The package depends on `didactic` and `pydantic>=2.10`.
+The distribution depends on `didactic` and `pydantic>=2.10`.
 
-## Quickstart
+## Convert a Pydantic model
 
-`from_pydantic` converts a `pydantic.BaseModel` subclass into a
-`dx.Model` subclass:
+`from_pydantic` creates a Didactic model class:
 
 ```python
 from pydantic import BaseModel, Field
+
 from didactic.pydantic import from_pydantic
 
 
-class PydUser(BaseModel):
+class PydanticUser(BaseModel):
     id: str
-    email: str = Field(description="primary contact")
+    email: str = Field(description="Primary contact")
 
 
-User = from_pydantic(PydUser)
+User = from_pydantic(PydanticUser)
+user = User(id="u1", email="alice@example.com")
 ```
 
-Field annotations, defaults, factories, aliases, descriptions,
-examples, and the `deprecated` flag carry across.
-`Annotated[T, ...]` constraint metadata flows through unchanged, so
-`annotated-types` primitives (`Ge`, `Le`, ...) continue to produce
-axioms on the didactic side.
+The conversion preserves annotations, defaults, factories, aliases,
+descriptions, examples, deprecation flags, and `Annotated` constraint
+metadata. Constraints from `annotated-types`, such as `Ge` and `Le`, become
+Didactic axioms.
 
-Custom Pydantic validators (`@field_validator`, `@model_validator`),
-`@computed_field`, and discriminated unions are not translated; the
-[Pydantic interop guide](https://panproto.dev/didactic/guide/pydantic/)
-lists the didactic-side replacements.
+## Convert a Didactic model
 
-`to_pydantic` is the inverse direction:
+`to_pydantic` creates a Pydantic model class:
 
 ```python
 import didactic.api as dx
@@ -56,21 +53,30 @@ from didactic.pydantic import to_pydantic
 
 class User(dx.Model):
     id: str
-    email: str = dx.field(description="primary contact")
+    email: str = dx.field(description="Primary contact")
 
 
-PydUser = to_pydantic(User)
+PydanticUser = to_pydantic(User)
+user = PydanticUser(id="u1", email="alice@example.com")
 ```
 
-Use `to_pydantic` to expose a `dx.Model` to FastAPI, OpenAPI
-generators, or any other Pydantic-shaped tool. The conversion is
-cached, so repeated calls with the same input return the same
-Pydantic class.
+The adapter caches generated classes. Repeated calls with the same input class
+return the same output class.
+
+## Translation boundary
+
+Pydantic field validators, model validators, computed fields, and discriminated
+unions require corresponding Didactic definitions after conversion. They are
+not copied by `from_pydantic`.
+
+Didactic models with `dx.indexed_by` fields retain their cross-field checks in
+the generated Pydantic class. Their JSON Schema also retains the conditional
+cases associated with known indices.
 
 ## Documentation
 
-See [Guides > Pydantic interop](https://panproto.dev/didactic/guide/pydantic/)
-for the full feature matrix and round-trip behaviour.
+See the [Pydantic interop guide](https://panproto.dev/didactic/guide/pydantic/)
+for the conversion matrix and round-trip behavior.
 
 ## License
 

@@ -1,31 +1,25 @@
 # didactic
 
-*A typed-data library for Python on top of [panproto](https://github.com/panproto/panproto).*
-
 [![PyPI](https://img.shields.io/pypi/v/didactic?style=flat-square&color=blue)](https://pypi.org/project/didactic/)
 [![Python](https://img.shields.io/pypi/pyversions/didactic?style=flat-square)](https://pypi.org/project/didactic/)
 [![License](https://img.shields.io/pypi/l/didactic?style=flat-square&color=green)](https://github.com/panproto/didactic/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/panproto/didactic/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/panproto/didactic/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-panproto.dev-blue?style=flat-square)](https://panproto.dev/didactic/)
 
-Authoring is class-based and looks like Pydantic. Underneath, every
-Model corresponds to a panproto `Theory`, every value to a panproto
-`Schema`, and every transformation between Models to a panproto
-`Lens`.
-
-This is the core distribution. Three sibling distributions
-(`didactic-pydantic`, `didactic-settings`, `didactic-fastapi`)
-contribute submodules under `didactic.<name>`.
+The `didactic` distribution provides immutable, validated Python models backed
+by [Panproto](https://github.com/panproto/panproto). Each `dx.Model` compiles to
+a Panproto theory, so the same declaration can drive validation, schema
+migration, compatibility checks, code generation, and schema version control.
 
 ## Install
 
-didactic targets Python 3.14 and panproto 0.52+.
+Didactic requires Python 3.14 or later and `panproto>=0.74.2`.
 
 ```sh
 pip install didactic
 ```
 
-## Quickstart
+## Define a model
 
 ```python
 import didactic.api as dx
@@ -39,17 +33,64 @@ class User(dx.Model):
     display_name: str = ""
 
 
-u = User(id="u1", email="a@b.c")
-u2 = u.with_(display_name="Alice")
+user = User(id="u1", email="alice@example.com")
+updated = user.with_(display_name="Alice")
+
+assert updated.display_name == "Alice"
+assert User.__theory__.name == "User"
 ```
+
+Model construction checks Python types, field constraints, class axioms, and
+custom validators. Instances serialize to Python objects or JSON and update
+through `with_()`, which returns a new validated instance.
+
+## Describe indexed data
+
+Use `dx.Universe` when one field selects the Python type accepted by another:
+
+```python
+from typing import Annotated, Literal
+
+import didactic.api as dx
+
+
+Payload = dx.Universe("Payload", text=str, number=float)
+
+
+class Record(dx.Model):
+    kind: Literal["text", "number"]
+    body: Annotated[str | float, Payload.at("kind")]
+
+
+record = Record(kind="number", body=2.5)
+```
+
+The general `dx.GADT` API defines arbitrary indexed families, constructors,
+dependent motives, equations, rewrites, and user-defined eliminators. Panproto
+checks the declaration when `compile()` is called. Generated JSON Schema and
+OpenAPI preserve known cases as conditions, Pydantic adapters retain
+cross-field validation, and compatibility checks treat index changes as
+breaking.
+
+## Included APIs
+
+The core distribution includes:
+
+- `dx.Model`, fields, validators, computed fields, and class axioms
+- references and embedded models for graph-shaped data
+- lenses, isomorphisms, and dependent lenses
+- migration registration, schema diffing, and migration synthesis
+- schema emitters and a filesystem-backed schema repository
+- property-based helpers for checking lens and migration laws
+- GADTs, indexed families, symbolic terms, reduction, and coverage checking
+
+The `didactic-pydantic`, `didactic-settings`, and `didactic-fastapi`
+distributions add their modules under the `didactic` namespace.
 
 ## Documentation
 
-The full documentation site is at
-[panproto.dev/didactic](https://panproto.dev/didactic/) and
-includes a tutorial, task-oriented guides, conceptual background,
-and per-symbol API reference. Source is in the workspace `docs/`
-directory.
+Read the [tutorial and guides](https://panproto.dev/didactic/) or the
+[API reference](https://panproto.dev/didactic/reference/).
 
 ## License
 
