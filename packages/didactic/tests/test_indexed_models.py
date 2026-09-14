@@ -50,24 +50,29 @@ def _expression_language() -> tuple[
     dx.Operation,
     dx.Operation,
 ]:
-    theory = dx.GADT("ModelExpression")
-    ty = theory.sort("ModelTy", closed=True)
-    expr = theory.family("ModelExpr", parameters=(dx.param("t", ty()),), closed=True)
-    integer = theory.constructor("model_int", result=ty())
-    boolean = theory.constructor("model_bool", result=ty())
-    int_atom = theory.sort("ModelIntAtom")
-    make_int = theory.operation("make_model_int", result=int_atom())
-    int_lit = theory.constructor(
-        "ModelIntLit",
-        inputs=(dx.param("value", int_atom()),),
-        result=expr(integer()),
+    lang = dx.GADT("ModelExpression")
+    ModelTy = lang.sort("ModelTy", closed=True)
+    ModelExpr = lang.family("ModelExpr", t=ModelTy, closed=True)
+    model_int = lang.constructor("model_int", returns=ModelTy)
+    model_bool = lang.constructor("model_bool", returns=ModelTy)
+    ModelIntAtom = lang.sort("ModelIntAtom")
+    make_model_int = lang.operation("make_model_int", returns=ModelIntAtom)
+    ModelIntLit = lang.constructor(
+        "ModelIntLit", value=ModelIntAtom, returns=ModelExpr[model_int()]
     )
-    bool_lit = theory.constructor(
-        "ModelBoolLit",
-        inputs=(dx.param("value", int_atom()),),
-        result=expr(boolean()),
+    ModelBoolLit = lang.constructor(
+        "ModelBoolLit", value=ModelIntAtom, returns=ModelExpr[model_bool()]
     )
-    return theory, ty, expr, integer, boolean, make_int, int_lit, bool_lit
+    return (
+        lang,
+        ModelTy,
+        ModelExpr,
+        model_int,
+        model_bool,
+        make_model_int,
+        ModelIntLit,
+        ModelBoolLit,
+    )
 
 
 (
