@@ -14,6 +14,15 @@ from didactic.gadt._ast import (
     Var,
     check_name,
 )
+from didactic.gadt._errors import GADTDeclarationError, GADTReductionError
+from didactic.gadt._telescope import (
+    Body,
+    InputSpec,
+    SortSpec,
+    resolve_inputs,
+    resolve_sort,
+    trace_body,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -21,14 +30,6 @@ if TYPE_CHECKING:
     import panproto
 
     from didactic.types._typing import JsonObject, JsonValue
-
-
-class GADTDeclarationError(ValueError):
-    """A locally detectable error in a GADT declaration."""
-
-
-class GADTReductionError(RuntimeError):
-    """A symbolic reduction could not make safe progress."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,11 +50,6 @@ class Parameter:
     def to_input_spec(self) -> JsonValue:
         """Render an operation input for Panproto."""
         return [self.name, self.sort.to_spec(), "Yes" if self.implicit else "No"]
-
-
-def param(name: str, sort: SortExpr, *, implicit: bool = False) -> Parameter:
-    """Construct a named parameter."""
-    return Parameter(name, sort, implicit)
 
 
 def _empty_constructor_names() -> list[str]:
@@ -90,6 +86,15 @@ class Family:
             )
             raise GADTDeclarationError(msg)
         return SortExpr(self.name, tuple(indices))
+
+    def __getitem__(self, indices: Term | tuple[Term, ...]) -> SortExpr:
+        """Apply this family in annotation position: ``Expr[t]``, ``Matrix[r, c]``.
+
+        A bare family with no parameters is already a sort; subscripting is
+        for families that have some.
+        """
+        items = indices if isinstance(indices, tuple) else (indices,)
+        return self(*items)
 
     @property
     def constructors(self) -> tuple[str, ...]:
@@ -175,28 +180,24 @@ class Operation:
             "output": self.output.to_spec(),
         }
 
-    def define(
-        self,
-        body: Term,
-        *,
-        name: str | None = None,
-        lhs_args: tuple[Term, ...] | None = None,
-    ) -> Equation:
+    def define(self, body: Body, *, name: str | None = None) -> Equation:
         """Define an eliminator by an oriented, typechecked equation.
 
-        The equation is included among the ordinary equalities sent to
-        Panproto and among Didactic's executable reduction rules. By default,
-        its left side applies the eliminator to variables named after every
-        explicit input.
+        ``body`` is a lambda over every input, in order, returning the
+        defining term. It runs once with a symbolic variable per input. The
+        equation applies the eliminator to those variables on the left and
+        is included among the equalities sent to Panproto and among the
+        executable reduction rules.
         """
         if self.role != "eliminator":
             msg = f"operation {self.name!r} is not an eliminator"
             raise GADTDeclarationError(msg)
-        if lhs_args is None:
-            lhs_args = tuple(Var(item.name) for item in self.explicit_inputs)
-        lhs = self(*lhs_args)
+        rhs = trace_body(
+            body, self.owner, self.inputs, what=f"eliminator {self.name!r}"
+        )
+        lhs = self(*(Var(item.name) for item in self.explicit_inputs))
         equation_name = name or f"{self.name}_def_{self.owner.definition_count}"
-        return self.owner.equation(equation_name, lhs, body, executable=True)
+        return self.owner.equation(equation_name, lhs, rhs, executable=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +268,14 @@ class GADT:
         """Return the number used to derive the next definition name."""
         return len(self._definitions)
 
+    def family_named(self, name: str) -> Family | None:
+        """Return the family declared under ``name``, if any."""
+        return self._families.get(name)
+
+    def operation_named(self, name: str) -> Operation | None:
+        """Return the operation declared under ``name``, if any."""
+        return self._operations.get(name)
+
     def _require_open(self) -> None:
         if self._sealed:
             msg = f"GADT {self.name!r} is sealed and cannot be modified"
@@ -276,33 +285,66 @@ class GADT:
         self,
         name: str,
         *,
-        parameters: Iterable[Parameter] = (),
         closed: bool = False,
         kind: JsonValue = "Structural",
     ) -> Family:
-        """Declare a plain or indexed sort."""
-        self._require_open()
-        if name in self._families:
-            raise GADTDeclarationError(f"sort {name!r} is already declared")
-        family = Family(self, name, tuple(parameters), closed, kind)
-        self._families[name] = family
-        return family
+        """Declare a sort with no indices: ``Ty = language.sort("Ty", closed=True)``.
 
-    family = sort
+        An indexed sort is declared with :meth:`family`, whose signature
+        carries the telescope.
+        """
+        return self._add_family(name, (), closed, kind)
+
+    def family(
+        self,
+        name: str,
+        *,
+        closed: bool = False,
+        kind: JsonValue = "Structural",
+        **parameters: InputSpec,
+    ) -> Family:
+        """Declare an indexed sort from keyword indices.
+
+        ``language.family("Expr", t=Ty, closed=True)`` declares ``Expr(t : Ty)``.
+        Keyword order is the telescope. A later index's sort may depend on an
+        earlier one, as a lambda over its name::
+
+            language.family("Term", context=Context, type=lambda context: Type[context])
+        """
+        resolved = resolve_inputs(parameters, what=f"family {name!r}")
+        for item in resolved:
+            if item.implicit:
+                msg = f"family {name!r}: index {item.name!r} cannot be implicit"
+                raise GADTDeclarationError(msg)
+        return self._add_family(name, resolved, closed, kind)
 
     def constructor(
         self,
         name: str,
         *,
-        inputs: Iterable[Parameter] = (),
-        result: SortExpr,
+        returns: SortSpec,
+        **inputs: InputSpec,
     ) -> Operation:
-        """Declare an introduction form for a family."""
+        """Declare an introduction form.
+
+        ``returns`` names the family the constructor introduces, and that
+        family's constructor list gains the name::
+
+            language.constructor(
+                "IntLit", value=El[int_code()], returns=Expr[int_code()]
+            )
+        """
+        telescope = resolve_inputs(inputs, what=f"constructor {name!r}")
+        result = resolve_sort(
+            returns,
+            {item.name: Var(item.name) for item in telescope},
+            what=f"constructor {name!r}: returns",
+        )
         family = self._families.get(result.name)
         if family is None:
             msg = f"constructor {name!r} returns undeclared family {result.name!r}"
             raise GADTDeclarationError(msg)
-        operation = self._add_operation(name, tuple(inputs), result, "constructor")
+        operation = self._add_operation(name, telescope, result, "constructor")
         family.add_constructor(name)
         return operation
 
@@ -310,28 +352,75 @@ class GADT:
         self,
         name: str,
         *,
-        inputs: Iterable[Parameter] = (),
-        result: SortExpr,
+        returns: SortSpec,
+        **inputs: InputSpec,
     ) -> Operation:
-        """Declare an ordinary operation."""
-        return self._add_operation(name, tuple(inputs), result, "operation")
+        """Declare an ordinary operation.
+
+        ``language.operation("int_value", returns=El[int_code()])`` declares a
+        nullary operation producing a carrier value.
+        """
+        telescope = resolve_inputs(inputs, what=f"operation {name!r}")
+        result = resolve_sort(
+            returns,
+            {item.name: Var(item.name) for item in telescope},
+            what=f"operation {name!r}: returns",
+        )
+        return self._add_operation(name, telescope, result, "operation")
 
     def eliminator(
         self,
         name: str,
         *,
-        inputs: Iterable[Parameter],
-        motive: Motive | SortExpr,
+        returns: SortSpec,
+        body: Body | None = None,
+        **inputs: InputSpec,
     ) -> Operation:
-        """Declare an operation whose equations eliminate a family."""
-        resolved = motive if isinstance(motive, Motive) else Motive(motive)
-        return self._add_operation(
-            name,
-            tuple(inputs),
-            resolved.result,
-            "eliminator",
-            resolved,
+        """Declare an eliminator, and define it when given a body.
+
+        ``returns`` is the motive and may depend on earlier inputs. The body
+        is a lambda over every input, in order, returning the term that
+        defines the eliminator, usually a :func:`match` over one input::
+
+            language.eliminator(
+                "evaluate",
+                t=Ty,
+                expression=lambda t: Expr[t],
+                returns=lambda t: El[t],
+                body=lambda t, expression: match(expression, IntLit=lambda v: v, ...),
+            )
+
+        Without a body the eliminator is declared only, and
+        :meth:`Operation.define` supplies one later.
+        """
+        telescope = resolve_inputs(inputs, what=f"eliminator {name!r}")
+        motive = Motive(
+            resolve_sort(
+                returns,
+                {item.name: Var(item.name) for item in telescope},
+                what=f"eliminator {name!r}: returns",
+            )
         )
+        operation = self._add_operation(
+            name, telescope, motive.result, "eliminator", motive
+        )
+        if body is not None:
+            operation.define(body)
+        return operation
+
+    def _add_family(
+        self,
+        name: str,
+        parameters: tuple[Parameter, ...],
+        closed: bool,
+        kind: JsonValue,
+    ) -> Family:
+        self._require_open()
+        if name in self._families:
+            raise GADTDeclarationError(f"sort {name!r} is already declared")
+        family = Family(self, name, parameters, closed, kind)
+        self._families[name] = family
+        return family
 
     def _add_operation(
         self,
@@ -682,5 +771,4 @@ __all__ = [
     "Motive",
     "Operation",
     "Parameter",
-    "param",
 ]

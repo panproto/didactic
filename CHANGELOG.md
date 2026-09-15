@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-14
+
+### Changed
+
+- `dx.GADT` declarations take their telescopes as keyword arguments, in
+  order, and express dependence between inputs as lambdas over earlier
+  names. `lang.constructor("IntLit", value=El[int_code()], returns=Expr[int_code()])`
+  replaces a tuple of `dx.param` calls, and
+  `lang.eliminator("evaluate", t=Ty, expression=lambda t: Expr[t], returns=lambda t: El[t], body=...)`
+  declares and defines an eliminator in one call. A family is applied to
+  its indices by subscripting, `Expr[t]`, and `dx.Implicit(Nat)` marks an
+  input Panproto infers. `Operation.define` takes a lambda over the
+  eliminator's inputs. Every reference is a Python object, so a misspelt
+  constructor or variable fails on the line that contains it rather than
+  at `compile()`, and editors can complete and rename them.
+- Case analysis is `dx.match(scrutinee, IntLit=lambda value: value, ...)`,
+  one keyword per constructor with a lambda over that constructor's
+  binders. Inside an eliminator body the constructor names are checked
+  against the scrutinee's family and each branch's binder count against
+  its constructor, with the valid set named on a miss. An operation may
+  stand in for a lambda that would only apply it, so `nil=fallback` reads
+  as `nil=lambda: fallback()`.
+- `dx.let(bound, lambda x: body)` binds the lambda's parameter.
+- The declaration surface is typed for a strict checker: lambdas are
+  typed as unions over arities up to eight, so each binder is inferred as
+  `dx.Var` rather than left unknown.
+- `GADTDeclarationError` and `GADTReductionError` live in
+  `didactic.gadt._errors`; their public import paths are unchanged.
+
+### Removed
+
+- `dx.var`, `dx.app`, `dx.branch`, `dx.case`, and `dx.param`. Variables
+  are lambda parameters, applications are calls on the operation,
+  branches and cases are `dx.match`, and parameters are keyword
+  arguments. The term classes `Var`, `App`, `Branch`, `Case`, and `Let`
+  remain exported for code that builds terms directly.
+
 ## [0.15.0] - 2026-09-12
 
 ### Added

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Union, cast
 
 from didactic.gadt._ast import App, SortExpr, Term, Var
-from didactic.gadt._declarations import GADT, Family, GADTDeclarationError, param
+from didactic.gadt._declarations import GADT, Family, GADTDeclarationError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -197,15 +197,12 @@ class Universe:
         self.name = name
         self.gadt = GADT(name)
         self.codes = self.gadt.sort(f"{name}Code", closed=True)
-        self.elements = self.gadt.family(
-            f"{name}El",
-            parameters=(param("code", self.codes()),),
-        )
+        self.elements = self.gadt.family(f"{name}El", code=self.codes)
         self._python_cases = dict(cases)
         self._code_terms: dict[str, App] = {}
         for code_name, annotation in cases.items():
             code_operation = self.gadt.constructor(
-                f"{name}_{code_name}", result=self.codes()
+                f"{name}_{code_name}", returns=self.codes
             )
             code_term = code_operation()
             self._code_terms[code_name] = code_term
@@ -215,8 +212,8 @@ class Universe:
             )
             self.gadt.operation(
                 f"{name}_{code_name}_value",
-                inputs=(param("value", value_sort()),),
-                result=self.elements(code_term),
+                value=value_sort,
+                returns=self.elements[code_term],
             )
 
         # Runtime conveniences. They are intentionally attributes rather than

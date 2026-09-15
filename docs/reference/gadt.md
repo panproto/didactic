@@ -10,7 +10,7 @@
 
 ::: didactic.gadt.Parameter
 
-::: didactic.gadt.param
+::: didactic.gadt.Implicit
 
 ::: didactic.gadt.Motive
 
@@ -36,17 +36,21 @@
 
 ::: didactic.gadt.term_from_spec
 
-::: didactic.gadt.var
-
-::: didactic.gadt.app
-
-::: didactic.gadt.hole
+::: didactic.gadt.match
 
 ::: didactic.gadt.let
 
-::: didactic.gadt.branch
+::: didactic.gadt.hole
 
-::: didactic.gadt.case
+## Declaration types
+
+::: didactic.gadt.Sort
+
+::: didactic.gadt.SortSpec
+
+::: didactic.gadt.InputSpec
+
+::: didactic.gadt.Body
 
 ## Model integration
 

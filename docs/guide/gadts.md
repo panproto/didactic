@@ -13,84 +13,104 @@ Pydantic, and FastAPI.
 
 ## Declare an indexed language
 
-The following language has codes for integers and booleans, a carrier
+A declaration names its inputs as keyword arguments, in order, each with a
+sort. The following language has codes for integers and booleans, a carrier
 `El(t)`, and expressions indexed by their result code:
 
 ```python
 import didactic.api as dx
 
 
-language = dx.GADT("TypedExpression")
+lang = dx.GADT("TypedExpression")
 
-ty = language.sort("Ty", closed=True)
-el = language.family("El", parameters=(dx.param("t", ty()),))
-expr = language.family(
-    "Expr",
-    parameters=(dx.param("t", ty()),),
-    closed=True,
-)
+Ty = lang.sort("Ty", closed=True)
+El = lang.family("El", t=Ty)
+Expr = lang.family("Expr", t=Ty, closed=True)
 
-int_code = language.constructor("int_code", result=ty())
-bool_code = language.constructor("bool_code", result=ty())
+int_code = lang.constructor("int_code", returns=Ty)
+bool_code = lang.constructor("bool_code", returns=Ty)
 
-int_value = language.operation("int_value", result=el(int_code()))
-bool_value = language.operation("bool_value", result=el(bool_code()))
+int_value = lang.operation("int_value", returns=El[int_code()])
+bool_value = lang.operation("bool_value", returns=El[bool_code()])
 
-int_lit = language.constructor(
-    "IntLit",
-    inputs=(dx.param("value", el(int_code())),),
-    result=expr(int_code()),
-)
-bool_lit = language.constructor(
-    "BoolLit",
-    inputs=(dx.param("value", el(bool_code())),),
-    result=expr(bool_code()),
-)
+IntLit = lang.constructor("IntLit", value=El[int_code()], returns=Expr[int_code()])
+BoolLit = lang.constructor("BoolLit", value=El[bool_code()], returns=Expr[bool_code()])
 ```
 
 `Ty` and `Expr(t)` are closed. Their constructor lists are therefore complete,
 which lets Panproto check case coverage. `El(t)` is open because ordinary
 operations may produce carrier values.
 
-Family arguments are terms. A family may have any finite dependent telescope,
-so a declaration such as `Term(context, type)` can give its second parameter
-the sort `Type(context)`. A two-dimensional family is equally direct:
+A family is applied to its indices by subscripting: `El[int_code()]` is the
+sort of integer values, and `Expr[int_code()]` the sort of integer-typed
+expressions. A family with no indices, such as `Ty`, is already a sort and is
+passed as it is.
+
+Every name in this declaration is a Python name. `IntLit` is the constructor
+itself, and calling it builds a term: `IntLit(int_value())`. A misspelt
+reference is a `NameError` on the line that contains it, and an editor can
+complete, rename, and jump to any of them.
+
+## Sorts that depend on earlier inputs
+
+A later input's sort may mention an earlier input. Write it as a lambda whose
+parameters name the inputs it needs. The lambda runs once, with a symbolic
+variable for each name, and its parameter names are checked against the
+inputs declared before it:
 
 ```python
-matrix = language.family(
-    "Matrix",
-    parameters=(
-        dx.param("rows", ty()),
-        dx.param("columns", ty()),
-    ),
+Nat = lang.sort("Nat", closed=True)
+A = lang.sort("A")
+Vec = lang.family("Vec", n=Nat, closed=True)
+
+zero = lang.constructor("zero", returns=Nat)
+succ = lang.constructor("succ", n=Nat, returns=Nat)
+nil = lang.constructor("nil", returns=Vec[zero()])
+cons = lang.constructor(
+    "cons",
+    n=dx.Implicit(Nat),
+    x=A,
+    rest=lambda n: Vec[n],
+    returns=lambda n: Vec[succ(n)],
 )
 ```
 
-## Define a motive and eliminator
+`rest` has sort `Vec(n)` and the result has sort `Vec(succ(n))`, both in terms
+of the first input. `dx.Implicit` marks an input Panproto infers from the
+explicit ones, so callers write `cons(x, rest)` and the length is recovered by
+unification.
 
-An eliminator is an operation with a named motive. Here the result sort is
-`El(t)`, so each constructor branch refines the same motive at a different
-index:
+Family indices form the same kind of telescope. A declaration such as
+`Term(context, type)` can give its second index the sort `Type(context)`:
 
 ```python
-evaluate = language.eliminator(
+Context = lang.sort("Context")
+Type = lang.family("Type", context=Context)
+Term = lang.family("Term", context=Context, type=lambda context: Type[context])
+```
+
+## Define an eliminator
+
+An eliminator is an operation whose result sort is a motive that may mention
+its inputs, and whose definition is a case analysis over one of them. Both are
+given in the declaration. The body is a lambda over every input, in order, and
+`dx.match` takes one keyword per constructor whose value is a lambda over that
+constructor's binders:
+
+```python
+evaluate = lang.eliminator(
     "evaluate",
-    inputs=(
-        dx.param("t", ty()),
-        dx.param("expression", expr(dx.var("t"))),
+    t=Ty,
+    expression=lambda t: Expr[t],
+    returns=lambda t: El[t],
+    body=lambda t, expression: dx.match(
+        expression,
+        IntLit=lambda value: value,
+        BoolLit=lambda value: value,
     ),
-    motive=el(dx.var("t")),
 )
 
-evaluate.define(
-    dx.case(
-        dx.var("expression"),
-        dx.branch("IntLit", "value", body=dx.var("value")),
-        dx.branch("BoolLit", "value", body=dx.var("value")),
-    )
-)
-
-theory = language.compile()
+theory = lang.compile()
 ```
 
 The two branch bodies have sorts `El(int_code())` and `El(bool_code())`.
@@ -98,21 +118,33 @@ Panproto checks each one against the motive under that branch's constructor
 refinement. A missing reachable constructor, an unreachable branch, or a
 branch body at the wrong index rejects the theory.
 
+Inside a body, `dx.match` checks its constructor names against the scrutinee's
+family at once and names the valid set on a miss, and checks each branch's
+binder count against its constructor. Panproto's checker remains the
+authority on everything else.
+
+A branch whose body only applies one operation may name the operation instead
+of writing the lambda: `nil=fallback` reads as `nil=lambda: fallback()`, and
+the binders are that operation's own input names. A body given as `...` or
+omitted declares the eliminator without defining it; `Operation.define` then
+supplies the body later.
+
 `compile()` is the freeze point. It returns the same checked theory on repeated
 calls and rejects later declarations. Failed compilation does not seal the
 builder, which leaves the declaration available for correction.
 
 ## Construct and reduce terms
 
-Calling an `Operation` constructs an immutable `App`. The helpers `var`,
-`app`, `hole`, `let`, `branch`, and `case` cover Panproto's complete term AST.
-Every term has a canonical JSON-shaped representation:
+Calling an `Operation` constructs an immutable `App`. `dx.match` and `dx.let`
+build case analyses and local bindings from lambdas in the same way as above,
+and `dx.hole` builds a typed hole. Every term has a canonical JSON-shaped
+representation:
 
 ```python
-term = evaluate(int_code(), int_lit(int_value()))
+term = evaluate(int_code(), IntLit(int_value()))
 
-assert language.infer_sort(term) == el(int_code())
-assert language.normalize(term) == int_value()
+assert lang.infer_sort(term) == El[int_code()]
+assert lang.normalize(term) == int_value()
 assert dx.term_from_spec(term.to_spec()) == term
 ```
 
@@ -124,6 +156,13 @@ result sort that would let an existential constructor index escape its branch.
 step budget fails closed on a nonterminating rewrite system. Panproto remains
 the authority for theory checking; `infer_sort()` and `normalize()` are useful
 construction-time tools, not a second implementation of the GAT checker.
+
+## Type checking the declaration
+
+Everything above is an ordinary runtime expression, so a strict type checker
+accepts it as written. The lambdas are typed as unions over arities, which
+lets the checker infer each binder as a `dx.Var`; a lambda with more than
+eight parameters still runs but its parameters are no longer inferred.
 
 ## Put an indexed family in a Model
 
@@ -169,12 +208,17 @@ Index fields may contain symbolic `Term` values. Optional `cases` associate
 concrete index tuples with Python carrier types:
 
 ```python
+shapes = dx.GADT("Shapes")
+Dim = shapes.sort("Dim", closed=True)
+Matrix = shapes.family("Matrix", rows=Dim, columns=Dim)
+two = shapes.constructor("two", returns=Dim)
+
 marker = dx.indexed_by(
-    matrix,
+    Matrix,
     "rows",
     "columns",
     cases={
-        (int_code(), int_code()): tuple[float, ...],
+        (two(), two()): tuple[tuple[float, float], tuple[float, float]],
     },
 )
 ```
