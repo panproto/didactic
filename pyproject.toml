@@ -33,7 +33,11 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py314"
-src = ["packages/didactic/src", "packages/didactic-pydantic/src"]
+src = [
+    "packages/didactic/src",
+    "packages/didactic-pydantic/src",
+    "packages/didactic-settings/src",
+]
 
 [tool.ruff.lint]
 # extend the defaults with strict docstring/style/typing checks

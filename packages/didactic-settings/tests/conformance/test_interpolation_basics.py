@@ -69,12 +69,12 @@ def test_nested_interpolation() -> None:
 
 def test_escape_literal_dollar_brace() -> None:
     """\\${literal} produces a literal ${literal}."""
-    root: dict = {}
+    root: dict[str, str] = {}
     assert resolve("\\${not_resolved}", root=root) == "${not_resolved}"
 
 
 def test_missing_reference_raises() -> None:
-    root = {"a": {}}
+    root: dict[str, dict[str, str]] = {"a": {}}
     with pytest.raises(InterpolationError, match="unresolved"):
         resolve("${a.b}", root=root)
 

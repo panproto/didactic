@@ -21,13 +21,13 @@ didactic.Model : the base from which Settings inherits all field machinery.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Self, cast
 
 import didactic.api as dx
+from didactic.settings._documents import load_document
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -133,45 +133,22 @@ class FileSource(_Source):
     name: str = "file"
 
     def fetch(self, fields: Sequence[str]) -> JsonObject:
-        """Return ``{field: value}`` from the file."""
+        """Return ``{field: value}`` from the file.
+
+        The file is read with
+        [load_document][didactic.settings.load_document]; a missing file
+        supplies nothing.
+        """
         path = Path(self.path)
         if not path.exists():
             return {}
-        text = path.read_text()
-        suffix = path.suffix.lower()
-        if suffix == ".json":
-            data = json.loads(text)
-        elif suffix == ".toml":
-            import tomllib  # noqa: PLC0415
-
-            data = tomllib.loads(text)
-        elif suffix in (".yaml", ".yml"):
-            import importlib  # noqa: PLC0415
-
-            try:
-                yaml_mod = importlib.import_module("yaml")
-            except ImportError as exc:  # pragma: no cover
-                msg = (
-                    "FileSource cannot load YAML files without the optional "
-                    "`yaml` extra; install didactic-settings[yaml]"
-                )
-                raise ImportError(msg) from exc
-            data = cast("Opaque", yaml_mod.safe_load(text))
-        else:
-            msg = f"unsupported FileSource suffix: {suffix!r}"
-            raise ValueError(msg)
-        if not isinstance(data, dict):
-            kind = type(data).__name__
-            msg = f"FileSource expects a top-level mapping; got {kind}"
-            raise TypeError(msg)
-        # Each loader (``json.loads``, ``tomllib.loads``, ``yaml.safe_load``)
-        # returns an opaque mapping at the type level; the values are
-        # ``JsonValue``-shaped at runtime and forwarded as such.
-        raw_dict = cast("dict[Opaque, Opaque]", data)
-        typed_data: dict[str, JsonValue] = {
-            str(k): cast("JsonValue", v) for k, v in raw_dict.items()
+        # ``load_document`` returns the covariant ``ConfigValue`` shape; at
+        # runtime its containers are the dicts and lists ``JsonValue`` names.
+        return {
+            k: cast("JsonValue", v)
+            for k, v in load_document(path).items()
+            if k in fields
         }
-        return {k: v for k, v in typed_data.items() if k in fields}
 
 
 @dataclass(frozen=True, slots=True)

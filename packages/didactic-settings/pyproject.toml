@@ -27,7 +27,6 @@ dependencies = [
 
 [project.optional-dependencies]
 yaml = ["pyyaml>=6"]
-toml = []
 
 [tool.hatch.build.targets.sdist]
 include = ["src/didactic/settings"]

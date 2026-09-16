@@ -12,8 +12,28 @@ from didactic.settings import (
 )
 
 
+def _upper(s: str) -> str:
+    return s.upper()
+
+
+def _echo(s: str) -> str:
+    return s
+
+
+def _shout(s: str) -> str:
+    return s + "!"
+
+
+def _suffix_a(s: str) -> str:
+    return s + "a"
+
+
+def _suffix_b(s: str) -> str:
+    return s + "b"
+
+
 def test_register_and_use() -> None:
-    register_resolver("test.upper", lambda s: s.upper(), replace=True)
+    register_resolver("test.upper", _upper, replace=True)
     try:
         assert resolve("${test.upper:hello}", root={}) == "HELLO"
         assert "test.upper" in list_resolvers()
@@ -22,17 +42,17 @@ def test_register_and_use() -> None:
 
 
 def test_register_existing_without_replace_raises() -> None:
-    register_resolver("test.echo", lambda s: s, replace=True)
+    register_resolver("test.echo", _echo, replace=True)
     try:
         with pytest.raises(ValueError, match="already registered"):
-            register_resolver("test.echo", lambda s: s + "!")
+            register_resolver("test.echo", _shout)
     finally:
         unregister_resolver("test.echo")
 
 
 def test_register_replace_ok() -> None:
-    register_resolver("test.x", lambda s: s + "a", replace=True)
-    register_resolver("test.x", lambda s: s + "b", replace=True)
+    register_resolver("test.x", _suffix_a, replace=True)
+    register_resolver("test.x", _suffix_b, replace=True)
     try:
         assert resolve("${test.x:y}", root={}) == "yb"
     finally:

@@ -170,7 +170,7 @@ requires-dist = [
     { name = "didactic", editable = "packages/didactic" },
     { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6" },
 ]
-provides-extras = ["yaml", "toml"]
+provides-extras = ["yaml"]
 
 [[package]]
 name = "didactic-workspace"

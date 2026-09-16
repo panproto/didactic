@@ -22,7 +22,7 @@ class FakeSchema(dx.Model):
     """Small two-level didactic schema used as the compose target."""
 
     name: str = ""
-    paths: dict[str, str] = dx.field(default_factory=dict)
+    paths: dict[str, str] = dx.field(default_factory=dict[str, str])
     items: tuple[str, ...] = ()
     nested: dx.Embed[FakeNested] = dx.field(default_factory=FakeNested)
     enabled: bool = False
