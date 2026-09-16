@@ -194,15 +194,26 @@ class TypeNotSupportedError(TypeError):
 # (str/int/float/bool/None) this is the identity.
 
 
+def _expected(sort: str, value: object) -> str:
+    """Render the message of the ``TypeError`` a scalar adapter raises.
+
+    The construction and JSON-loading paths turn that ``TypeError`` into
+    a ``ValidationError`` entry of type ``type_error`` against the field,
+    so a wrong-typed value is refused with its location under ``python
+    -O`` as well as under a plain interpreter.
+    """
+    return f"expected {sort}, got {type(value).__name__}"
+
+
 def _scalar_identity(v: JsonValue) -> FieldValue:
     """Identity function for scalars whose JSON form matches Python's.
 
     Only invoked on values whose runtime type is one of the scalar
     overlaps between ``JsonValue`` and ``FieldValue``: ``str``, ``int``,
-    ``float``, ``bool``, or ``None``. Asserted to keep the static type
-    checker on the same page as the registry's intent.
+    ``float``, ``bool``, or ``None``; anything else raises ``TypeError``.
     """
-    assert v is None or isinstance(v, (str, int, float, bool))
+    if not (v is None or isinstance(v, (str, int, float, bool))):
+        raise TypeError(_expected("a JSON scalar", v))
     return v
 
 
@@ -211,7 +222,8 @@ def _scalar_identity(v: JsonValue) -> FieldValue:
 # with a narrow parameter type keeps the registry's value-type tuple
 # precise.
 def _enc_str(v: FieldValue) -> Encoded:
-    assert isinstance(v, str)
+    if not isinstance(v, str):
+        raise TypeError(_expected("str", v))
     return v
 
 
@@ -220,7 +232,8 @@ def _dec_str(s: Encoded) -> FieldValue:
 
 
 def _enc_int(v: FieldValue) -> Encoded:
-    assert isinstance(v, int) and not isinstance(v, bool)
+    if not isinstance(v, int) or isinstance(v, bool):
+        raise TypeError(_expected("int", v))
     return str(v)
 
 
@@ -229,7 +242,8 @@ def _dec_int(s: Encoded) -> FieldValue:
 
 
 def _enc_float(v: FieldValue) -> Encoded:
-    assert isinstance(v, (int, float)) and not isinstance(v, bool)
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        raise TypeError(_expected("float", v))
     return repr(float(v))
 
 
@@ -238,7 +252,8 @@ def _dec_float(s: Encoded) -> FieldValue:
 
 
 def _enc_bool(v: FieldValue) -> Encoded:
-    assert isinstance(v, bool)
+    if not isinstance(v, bool):
+        raise TypeError(_expected("bool", v))
     return "true" if v else "false"
 
 
@@ -247,7 +262,8 @@ def _dec_bool(s: Encoded) -> FieldValue:
 
 
 def _enc_bytes(v: FieldValue) -> Encoded:
-    assert isinstance(v, bytes)
+    if not isinstance(v, bytes):
+        raise TypeError(_expected("bytes", v))
     return v.hex()
 
 
@@ -256,12 +272,14 @@ def _dec_bytes(s: Encoded) -> FieldValue:
 
 
 def _from_json_bytes(v: JsonValue) -> FieldValue:
-    assert isinstance(v, str)
+    if not isinstance(v, str):
+        raise TypeError(_expected("hex text for bytes", v))
     return bytes.fromhex(v)
 
 
 def _enc_decimal(v: FieldValue) -> Encoded:
-    assert isinstance(v, Decimal)
+    if not isinstance(v, Decimal):
+        raise TypeError(_expected("Decimal", v))
     return str(v)
 
 
@@ -270,12 +288,14 @@ def _dec_decimal(s: Encoded) -> FieldValue:
 
 
 def _from_json_decimal(v: JsonValue) -> FieldValue:
-    assert isinstance(v, (str, int, float)) and not isinstance(v, bool)
+    if not isinstance(v, (str, int, float)) or isinstance(v, bool):
+        raise TypeError(_expected("a number or text for Decimal", v))
     return Decimal(str(v))
 
 
 def _enc_datetime(v: FieldValue) -> Encoded:
-    assert isinstance(v, datetime)
+    if not isinstance(v, datetime):
+        raise TypeError(_expected("datetime", v))
     return v.isoformat()
 
 
@@ -284,12 +304,14 @@ def _dec_datetime(s: Encoded) -> FieldValue:
 
 
 def _from_json_datetime(v: JsonValue) -> FieldValue:
-    assert isinstance(v, str)
+    if not isinstance(v, str):
+        raise TypeError(_expected("ISO 8601 text for datetime", v))
     return datetime.fromisoformat(v)
 
 
 def _enc_date(v: FieldValue) -> Encoded:
-    assert isinstance(v, date)
+    if not isinstance(v, date):
+        raise TypeError(_expected("date", v))
     return v.isoformat()
 
 
@@ -298,12 +320,14 @@ def _dec_date(s: Encoded) -> FieldValue:
 
 
 def _from_json_date(v: JsonValue) -> FieldValue:
-    assert isinstance(v, str)
+    if not isinstance(v, str):
+        raise TypeError(_expected("ISO 8601 text for date", v))
     return date.fromisoformat(v)
 
 
 def _enc_time(v: FieldValue) -> Encoded:
-    assert isinstance(v, time)
+    if not isinstance(v, time):
+        raise TypeError(_expected("time", v))
     return v.isoformat()
 
 
@@ -312,12 +336,14 @@ def _dec_time(s: Encoded) -> FieldValue:
 
 
 def _from_json_time(v: JsonValue) -> FieldValue:
-    assert isinstance(v, str)
+    if not isinstance(v, str):
+        raise TypeError(_expected("ISO 8601 text for time", v))
     return time.fromisoformat(v)
 
 
 def _enc_uuid(v: FieldValue) -> Encoded:
-    assert isinstance(v, UUID)
+    if not isinstance(v, UUID):
+        raise TypeError(_expected("UUID", v))
     return str(v)
 
 
@@ -326,7 +352,8 @@ def _dec_uuid(s: Encoded) -> FieldValue:
 
 
 def _from_json_uuid(v: JsonValue) -> FieldValue:
-    assert isinstance(v, str)
+    if not isinstance(v, str):
+        raise TypeError(_expected("UUID text", v))
     return UUID(v)
 
 

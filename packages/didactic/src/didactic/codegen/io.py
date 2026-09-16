@@ -248,7 +248,7 @@ def _coerce_payload(
             continue
         try:
             out[name] = spec.translation.from_json(cast("JsonValue", value))
-        except TypeError, ValueError, AssertionError:
+        except TypeError, ValueError:
             # leave already-Python-shape values untouched
             out[name] = cast("FieldValue", value)
     return out
