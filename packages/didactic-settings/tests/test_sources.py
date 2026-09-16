@@ -12,6 +12,7 @@ import pytest
 import didactic.api as dx
 from didactic.settings import (
     CliSource,
+    ConfigError,
     DotEnvSource,
     EnvSource,
     FileSource,
@@ -237,8 +238,11 @@ def test_reserved_load_keyword_as_a_field_name_is_refused_at_class_creation() ->
         # the class statement raises; the name is referenced for the checker
         _ = Bad
 
-    assert "profile" in str(info.value)
-    assert "alias" in str(info.value)
+    assert str(info.value) == (
+        "Bad declares a field named 'profile', which is a keyword of "
+        "Settings.load(); rename the field and give it alias='profile' to keep "
+        "the key in documents"
+    )
     for reserved in (
         "path",
         "groups",
@@ -306,3 +310,31 @@ def test_plain_construction_carries_no_provenance() -> None:
     with pytest.raises(dx.ValidationError):
         App(y=1)  # type: ignore[call-arg]
     assert not hasattr(App(), "__provenance__")
+
+
+def test_env_source_refuses_a_slot_and_a_path_below_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOFI_TRAINER", '{"epochs": 2}')
+    monkeypatch.setenv("LOFI_TRAINER__EPOCHS", "3")
+    with pytest.raises(ConfigError) as info:
+        RunSettings.load()
+    assert str(info.value) == (
+        "Environment variables set both 'trainer' and 'trainer.epochs' "
+        "(LOFI_TRAINER__EPOCHS); set the whole slot or its fields, not both"
+    )
+    assert info.value.path == "trainer.epochs"
+
+
+def test_cli_source_refuses_a_path_below_a_slot_set_whole() -> None:
+    class App(Settings, RunSpec):
+        __sources__: ClassVar = (
+            CliSource({"trainer.epochs": "3", "trainer": '{"epochs": 2}'}),
+        )
+
+    with pytest.raises(ConfigError) as info:
+        App.load()
+    assert str(info.value) == (
+        "CLI arguments set both 'trainer' (trainer) and a path below it; "
+        "set the whole slot or its fields, not both"
+    )

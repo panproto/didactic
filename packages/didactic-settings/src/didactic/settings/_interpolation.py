@@ -116,7 +116,7 @@ def lookup(path: str) -> ConfigValue:
     if state is None:
         msg = "lookup() called outside an active resolve()"
         raise InterpolationError(msg)
-    nodes = _parse("${" + path + "}")
+    nodes = _parse("${" + path + "}") if path.strip() else ()
     if len(nodes) != 1 or not isinstance(nodes[0], _Reference):
         msg = f"lookup() expects a dotted path; got {path!r}"
         raise InterpolationError(msg)
@@ -605,6 +605,22 @@ def mentions_expression(value: ConfigValue) -> bool:
     return False
 
 
+def is_whole_expression(text: str) -> bool:
+    """Whether the text is exactly one ``${...}`` expression and nothing else.
+
+    Such a leaf substitutes the typed value the expression evaluates to,
+    so a list or mapping may arrive at a slot that way; text with
+    surrounding literal characters always resolves to a string.
+    """
+    if "${" not in text:
+        return False
+    try:
+        nodes = _parse(text)
+    except InterpolationError:
+        return False
+    return len(nodes) == 1 and not isinstance(nodes[0], _Literal)
+
+
 def _resolve_value(
     node: ConfigValue,
     here: tuple[str | int, ...],
@@ -801,6 +817,7 @@ __all__ = [
     "ResolverFn",
     "active_path",
     "active_root",
+    "is_whole_expression",
     "list_resolvers",
     "lookup",
     "mentions_expression",

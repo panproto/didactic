@@ -92,9 +92,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adds `yaml` only, that no engine module imports a forbidden name, and
   that opening a YAML file without PyYAML names the
   `didactic-settings[yaml]` extra.
+- bead's compose test suite is carried as the conformance spec under
+  `packages/didactic-settings/tests/conformance/`, with three textual
+  rewrites (`from bead.config.compose import` to
+  `from didactic.settings import`, `profile_dict=` to `base=`,
+  `extra=[overlay]` to `overlays=[overlay]`) plus two annotations on a
+  `root` dict and named resolver functions in place of lambdas so the
+  files pass strict pyright; no assertion changes.
 
 ### Changed
 
+- A scalar field given a value of the wrong Python type (`"5"` or `2.0`
+  or `True` for `int`, `1` for `bool`, a number for `str`, and the
+  `bytes`, `Decimal`, `datetime`, `date`, `time` and `UUID` adapters
+  alike) is refused as a `ValidationError` entry of type `type_error`
+  with the field's `loc` and the message `expected int, got str`. The
+  adapters raised `AssertionError` before, which carried no location and
+  vanished under `python -O`.
+- A validation failure inside a nested model, a tagged-union variant or
+  a container of either is reported by the outer model: each inner entry
+  is re-located under the field name (`loc == ("trainer", "mode")`),
+  `ValidationError.model` is the outer class, and the outer model keeps
+  collecting its other fields' errors instead of stopping at the first
+  nested failure. Code matching `error.model is Inner` reads the
+  location from `loc` instead.
 - `Settings.__provenance__` is a `Provenance` of `Origin` records keyed
   by dotted leaf path, not a `dict[str, str]` keyed by top-level field.
   Code that compared `__provenance__["port"] == "env"` reads
@@ -116,6 +137,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment, dotenv and CLI text is decoded by the full leaf
   annotation rather than coerced for `int`, `float` and `bool` only, and
   unreadable text is `CoercionError` rather than a validation failure.
+- A value that arrives typed (a file, a `base` or overlay mapping, a
+  `(key, value)` pair, `Settings.load(**values)`, a typed CLI argument, a
+  resolver result) is checked against the leaf annotation when it is
+  written, so a wrong-typed leaf is `CoercionError` with the leaf's path
+  and the layer that set it (`bool` never satisfies `int`, `int`
+  satisfies `float`, a `Literal` or `Enum` needs a member of the same
+  type, a `Path`, `datetime`, `date`, `time`, `UUID`, `Decimal` or
+  `bytes` leaf takes its JSON text form). Every element of a
+  `tuple[Model, ...]` or `tuple[Union, ...]` list is checked, so a
+  non-mapping element is refused as `items[0]`. The resolved tree is
+  validated through `model_validate_json`, so `Path` and `datetime`
+  leaves compose from every layer.
+- Text holding a `${...}` expression is kept as it is from a textual
+  layer whatever the leaf annotation, and an expression may sit at a
+  leaf, a list, a map or a model slot in any layer; the resolved value is
+  checked against the schema, and text a resolver produced at a
+  non-`str` leaf is decoded by the annotation, so
+  `trainer.epochs=${oc.env:EPOCHS}`, `LOFI_T__N='${seed}'` and
+  `tags: ${oc.dict.keys:paths}` compose. A union slot still needs a
+  literal tag at merge time. A textual `null`, `~` or empty value clears
+  an optional model, union or map slot.
+- The schema's default map is the lowest layer of a `dict[str, T]` slot:
+  a default entry survives a layer that adds another key, and a layer's
+  entry composes over the default entry of the same key, through a
+  default union entry's tag included.
+- A computed or derived field name is accepted and dropped from document
+  layers only (a file, a mapping, a profile, an overlay, a file source);
+  in an override, a `Settings.load(**values)` keyword or a textual source
+  it is refused as `UnknownKeyError` saying the field is computed.
+- A typed discriminator must match a variant's literal by type as well
+  as value (`True` does not select `Literal[1]`, `1` does not select
+  `Literal[True]`); `UnknownVariantError.registered` and
+  `UnknownKeyError.declared_by` carry the live tag values rather than
+  their text, messages render them with `repr` (`Stage registers:
+  [1, 2]`), and a variant registered under several literals is named
+  once, by its first. A discriminator given under an alias the variants
+  declare selects the variant. Before any tag is known, a root-declared
+  field a variant shadows with another annotation or optionality is
+  refused until the tag is set. An empty union node names the layer
+  that created it in the `selects no variant` message.
 - For code moving from `bead.config.compose`: `ComposeValue` is
   `ConfigValue`; `compose(profile_dict=...)` is `compose(base=...)` and
   `compose(extra=[...])` is `compose(overlays=[...])`; the primary
@@ -129,9 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the leaf annotation, falling back to a standard-library scalar grammar
   rather than YAML: `items=[a, b]` with bare words no longer parses
   (write `items='["a", "b"]'` or `items=a,b` under `tuple[str, ...]`),
-  and `yes` and `no` are strings under `str`. A string at a model, union
-  or map slot is refused as the wrong shape before interpolation, so
-  `section: ${other}` no longer pastes a subtree. Fields of a
+  and `yes` and `no` are strings under `str`. Fields of a
   tagged-union variant, the discriminator included, are settable from
   every layer. `oc.select`, `oc.dict.keys`, `oc.dict.values`,
   `oc.deprecated` and `oc.create` are implemented in full (bead's

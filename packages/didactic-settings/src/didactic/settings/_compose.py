@@ -25,10 +25,14 @@ validated instance.
 
 from __future__ import annotations
 
+import enum
 import json
 from dataclasses import dataclass, replace
-from pathlib import Path
+from datetime import date, datetime, time
+from decimal import Decimal
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, cast
+from uuid import UUID
 
 from didactic.settings._documents import find_profile, load_document
 from didactic.settings._errors import ConfigError
@@ -39,7 +43,7 @@ from didactic.settings._groups import (
     split_overrides,
 )
 from didactic.settings._interpolation import resolve_traced
-from didactic.settings._merge import defaults_view, merge_layer, settle
+from didactic.settings._merge import check_tree, defaults_view, merge_layer, settle
 from didactic.settings._provenance import Layer, Origin, Provenance, complete
 from didactic.settings._scalars import parse_override, validate_override_key
 from didactic.settings._values import nest_override
@@ -289,8 +293,9 @@ def compose_layers[M: dx.Model](
     Raises
     ------
     ConfigError
-        For a refusal during the merge or the settle pass, or when the
-        schema declares ``__slots__`` and cannot carry the record.
+        For a refusal during the merge, the settle pass or the check of
+        the resolved tree, or when the schema declares ``__slots__`` and
+        cannot carry the record.
     """
     tree: dict[str, ConfigValue] = {}
     record: dict[KeyPath, Origin] = {}
@@ -306,13 +311,36 @@ def compose_layers[M: dx.Model](
             if origin is not None
             else Origin("default", expression=text)
         )
-    value = schema.model_validate(cast("Mapping[str, JsonValue]", resolved))
+    resolved = check_tree(resolved, schema=schema, provenance=record)
+    # The JSON path converts the tree's text and list forms (a ``Path`` or
+    # ``datetime`` leaf as text, a ``tuple`` field as a list) through each
+    # field's ``from_json`` before construction.
+    value = schema.model_validate_json(json.dumps(resolved, default=_json_default))
     dumped = cast("dict[str, ConfigValue]", json.loads(value.model_dump_json()))
     provenance = complete(record, dumped)
     attach_provenance(value, provenance)
     return Composed(
         value=value, tree=resolved, provenance=provenance, layers=tuple(layers)
     )
+
+
+def _json_default(value: object) -> JsonValue:
+    """Render a typed value a ``(key, value)`` pair carried into the tree.
+
+    The tree is JSON-shaped, but a typed override may hand the engine a
+    ``Path``, a ``datetime``, a ``UUID``, a ``Decimal``, ``bytes`` or an
+    enum member; each is rendered the way ``model_dump_json`` renders it.
+    """
+    if isinstance(value, datetime | date | time):
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return value.hex()
+    if isinstance(value, enum.Enum):
+        return cast("JsonValue", value.value)
+    if isinstance(value, PurePath | UUID | Decimal):
+        return str(value)
+    msg = f"Object of type {type(value).__name__} is not JSON serializable"
+    raise TypeError(msg)
 
 
 def attach_provenance(value: dx.Model, provenance: Provenance) -> None:

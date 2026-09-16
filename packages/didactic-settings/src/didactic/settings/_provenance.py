@@ -217,11 +217,15 @@ def stamp(
 ) -> None:
     """Record a leaf write.
 
-    Every entry at or under ``path`` is dropped, then one entry is written
-    per leaf of ``value`` when it is a non-empty mapping, else one entry at
-    ``path``.
+    Every entry at or under ``path`` is dropped, and so is every entry at
+    a strict ancestor of ``path`` (a node written wholesale, or created
+    empty, before a leaf below it was written); then one entry is written
+    per leaf of ``value`` when it is a non-empty mapping, else one entry
+    at ``path``.
     """
     prune(record, path)
+    for cut in range(len(path) - 1, 0, -1):
+        record.pop(path[:cut], None)
     if isinstance(value, Mapping) and value:
         for leaf_path, _ in leaves(value, path):
             record[leaf_path] = origin

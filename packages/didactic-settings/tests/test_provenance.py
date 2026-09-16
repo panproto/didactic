@@ -21,6 +21,7 @@ import didactic.api as dx
 from didactic.settings import (
     Composed,
     ConfigError,
+    InterpolationError,
     Origin,
     Provenance,
     compose,
@@ -35,6 +36,7 @@ from ._schemas import (
     LinearDecoder,
     LstmEncoder,
     RunSpec,
+    TrainerSpec,
     TransformerEncoder,
 )
 
@@ -266,26 +268,62 @@ def test_interpolated_leaf_keeps_its_layer_and_gains_the_expression(
     assert run.value.trainer.log_dir == "/d/runs/logs"
 
 
-def test_whole_node_interpolation_at_a_mapping_slot_is_refused(tmp_path: Path) -> None:
-    # a string at a model, union or map slot is refused before interpolation
-    # runs, so ``section: ${other}`` never pastes a subtree into the tree
+def test_whole_node_interpolation_pastes_a_subtree_at_a_map_or_model_slot(
+    tmp_path: Path,
+) -> None:
+    # an expression at a map or model slot is written as text and resolved
+    # with the rest of the tree; the pasted leaves inherit the origin of the
+    # leaf that held the expression, expression included
     class Holder(dx.Model, extra="forbid"):
         a: dict[str, str] = dx.field(default_factory=dict[str, str])
         b: dict[str, str] = dx.field(default_factory=dict[str, str])
 
     a = _write(tmp_path / "a.yaml", "a:\n  x: '1'\nb: ${a}\n")
-    with pytest.raises(ConfigError) as info:
-        compose(schema=Holder, overlays=[a])
-    assert info.value.path == "b"
-    assert str(info.value) == (
-        "Config key 'b' expects a mapping for dict[str, str] (set by overlay:a.yaml); "
-        "got str"
+    run = compose_traced(schema=Holder, overlays=[a])
+    assert run.value.b == {"x": "1"}
+    assert run.provenance["b.x"].label == "overlay:a.yaml"
+    assert run.provenance["b.x"].expression == "${a}"
+    cfg = _write(
+        tmp_path / "run.yaml",
+        "trainer: ${paths}\npaths:\n  epochs: 4\n  out_dir: /d\n",
     )
-    cfg = _write(tmp_path / "run.yaml", "trainer: ${paths}\npaths:\n  d: /d\n")
-    with pytest.raises(ConfigError) as info2:
-        compose(cfg, schema=RunSpec)
-    assert str(info2.value) == (
+
+    class Wide(dx.Model, extra="forbid"):
+        trainer: TrainerSpec = dx.field(default_factory=TrainerSpec)
+        paths: dict[str, int | str] = dx.field(default_factory=dict[str, int | str])
+
+    wide = compose(cfg, schema=Wide)
+    assert wide.trainer.epochs == 4
+    assert wide.trainer.out_dir == "/d"
+
+
+def test_whole_node_interpolation_is_checked_after_resolution(tmp_path: Path) -> None:
+    # a pasted subtree is checked like any other value: a scalar where a
+    # mapping is declared, or an unknown key inside it, is refused with the
+    # slot's path and the layer that wrote the expression
+    a = _write(tmp_path / "a.yaml", "paths:\n  d: /d\ntrainer: ${paths.d}\n")
+    with pytest.raises(ConfigError) as info:
+        compose(a, schema=RunSpec)
+    assert info.value.path == "trainer"
+    assert str(info.value) == (
         "Config key 'trainer' expects a mapping for TrainerSpec "
+        "(set by file:a.yaml); got str"
+    )
+    b = _write(tmp_path / "b.yaml", "paths:\n  d: /d\ntrainer: ${paths}\n")
+    with pytest.raises(dx.ValidationError) as failure:
+        compose(b, schema=RunSpec)
+    assert failure.value.entries[0].loc == ("trainer", "d")
+    assert failure.value.entries[0].type == "extra_field"
+
+
+def test_whole_node_interpolation_at_a_union_slot_is_refused(tmp_path: Path) -> None:
+    # a union slot needs a literal tag at merge time, so an expression there
+    # is refused as the wrong shape before interpolation runs
+    cfg = _write(tmp_path / "run.yaml", "optimizer: ${paths}\npaths:\n  kind: adam\n")
+    with pytest.raises(ConfigError) as info:
+        compose(cfg, schema=RunSpec)
+    assert str(info.value) == (
+        "Config key 'optimizer' expects a mapping for OptimizerSpec "
         "(set by file:run.yaml); got str"
     )
 
@@ -525,4 +563,39 @@ def test_unions_in_every_position_are_covered(tmp_path: Path) -> None:
             overlays=[{"model": {"type_encoder": {"kind": "transformer"}}}],
         ).model.type_encoder,
         TransformerEncoder,
+    )
+
+
+def test_relative_default_expression_is_mount_independent() -> None:
+    class Reusable(dx.Model, extra="forbid"):
+        out_dir: str = "runs"
+        log_dir: str = "${.out_dir}/logs"
+
+    class Run(dx.Model, extra="forbid"):
+        trainer: Reusable = dx.field(default_factory=Reusable)
+
+    class Wide(dx.Model, extra="forbid"):
+        run: Run = dx.field(default_factory=Run)
+        other: Reusable = dx.field(default_factory=Reusable)
+
+    wide = compose_traced(schema=Wide, overlays=[{"other": {"out_dir": "/x"}}])
+    assert wide.value.run.trainer.log_dir == "runs/logs"
+    assert wide.value.other.log_dir == "/x/logs"
+    assert wide.provenance["other.log_dir"] == Origin(
+        "default", expression="${.out_dir}/logs"
+    )
+    assert wide.provenance["run.trainer.log_dir"].expression == "${.out_dir}/logs"
+
+
+def test_absolute_default_expression_binds_to_one_mount() -> None:
+    class Run(dx.Model, extra="forbid"):
+        trainer: TrainerSpec = dx.field(default_factory=TrainerSpec)
+
+    class Wide(dx.Model, extra="forbid"):
+        run: Run = dx.field(default_factory=Run)
+
+    with pytest.raises(InterpolationError) as info:
+        compose(schema=Wide)
+    assert str(info.value) == (
+        "Reference trainer unresolved; at config key 'run.trainer.log_dir'"
     )

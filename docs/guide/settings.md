@@ -77,7 +77,7 @@ class ModelSection(dx.Model, extra="forbid"):
 class TrainerSpec(dx.Model, extra="forbid"):
     epochs: int = 1
     out_dir: str = "runs"
-    log_dir: str = "${trainer.out_dir}/logs"
+    log_dir: str = "${.out_dir}/logs"
 
 
 class RunSpec(dx.Model, extra="forbid"):
@@ -90,7 +90,11 @@ class RunSpec(dx.Model, extra="forbid"):
 
 `TrainerSpec.log_dir` has a default that is an expression. Defaults may refer
 to the composed tree; the engine materialises such a default before
-interpolation so it resolves against whatever the layers set.
+interpolation so it resolves against whatever the layers set. A default
+expression is resolved at the path the field is mounted at, so a model meant
+to be reused under several parents should refer to its siblings relatively
+(`${.out_dir}`); the absolute `${trainer.out_dir}` binds `TrainerSpec` to the
+`trainer` slot and fails with an unresolved reference anywhere else.
 
 ## Files
 
@@ -206,8 +210,10 @@ parentheses on every leaf it writes:
 
 After the last layer the engine settles the tree (injecting the discriminator
 a field default selects into every union node that has none), interpolates the
-whole tree once, calls `schema.model_validate(tree)` once, and completes the
-provenance record from the validated instance.
+whole tree once, checks the resolved tree against the schema, validates it
+once through `schema.model_validate_json`, so that a `Path` or `datetime` leaf
+written as text and a `tuple` field written as a list take their typed forms,
+and completes the provenance record from the validated instance.
 
 The search roots are the primary file's parent, then the `search_path` entries
 in order. Fragments and profiles are looked up in every root; the earliest
@@ -321,9 +327,10 @@ except UnknownKeyError as error:
 An override is either a `key=value` string or a `(key, value)` pair. A string
 is textual: the value text is decoded by the annotation of the leaf it lands
 on, so `"123"` stays a string under `str` and becomes an integer under `int`.
-A pair is typed and its value is used as given. Both become a one-leaf layer
-mounted at the key and merge through the same checks as a file, so an unknown
-key is `UnknownKeyError` at merge time, never a validation error later.
+A pair is typed and its value is used as given, after a check against the
+leaf annotation. Both become a one-leaf layer mounted at the key and merge
+through the same checks as a file, so an unknown key is `UnknownKeyError` at
+merge time, never a validation error later.
 
 Textual decoding follows the annotation:
 
@@ -338,11 +345,27 @@ Textual decoding follows the annotation:
 - `tuple[T, ...]` and `frozenset[T]` read JSON when the text starts with `[`
   and otherwise split on commas, decoding each item as `T`;
 - a model, union or map slot requires JSON object text, so
-  `model.type_encoder={"kind": "lstm", "hidden": 64}` sets the whole slot.
+  `model.type_encoder={"kind": "lstm", "hidden": 64}` sets the whole slot, and
+  an optional model, union or map slot reads `null`, `~` and the empty string
+  as `None`;
+- text holding a `${...}` expression is kept as it is, whatever the
+  annotation, and decoded the same way once interpolation has resolved it, so
+  `trainer.epochs=${oc.env:EPOCHS}` sets an `int` leaf from the environment.
 
 Text that cannot be read raises `CoercionError` naming the path, the expected
 form and the text. Lists are set whole: a key that indexes into one, such as
 `tags.0`, is refused as `OverrideSyntaxError`.
+
+A value that arrives typed (from a file, a `base` or overlay mapping, a
+`(key, value)` pair, `Settings.load(**values)`, a typed CLI argument, or a
+resolver) is checked against the leaf annotation when it is written: `bool`
+never satisfies `int`, `int` satisfies `float`, `None` needs an optional
+annotation, a `Literal` or `Enum` needs a member of the same type, and a
+`Path`, `datetime`, `date`, `time`, `UUID`, `Decimal` or `bytes` leaf takes
+its JSON text form. A mismatch is the same `CoercionError`, with the value's
+`repr` (or `dict` or `list` for a container) as the text, so a TOML file
+setting `epochs = "20"` is refused with `trainer.epochs`, the file's name and
+the text `'20'`.
 
 ```python
 from didactic.settings import CoercionError, OverrideSyntaxError
@@ -469,7 +492,15 @@ plugin registers after the root was defined take part. A discriminator must be
 a literal value: `kind: ${encoder}` is refused, because variant selection
 happens at merge time and interpolation runs after it. Under a textual layer
 the tag text is decoded against every variant's literal, so a union tagged by
-`Literal[1]` is selected by the environment variable value `1`.
+`Literal[1]` is selected by the environment variable value `1`. A typed tag
+must match a literal by type as well as value: `True` does not select a
+`Literal[1]` variant and `1` does not select a `Literal[True]` one, and the
+registry is rendered with the live values (`Stage registers: [1, 2]`), so a
+`'1'` given where `1` is registered reads as the mismatch it is. A variant
+registered under several literals is named by its first. When the variants
+alias the discriminator field (`kind: Literal["w"] = dx.field(default="w",
+alias="type")`), a tag given under the alias selects the variant and is stored
+under the field name.
 
 ```python
 from didactic.settings import UnknownVariantError
@@ -494,14 +525,30 @@ Unions nest: a variant's own fields may hold further models, unions, maps and
 lists, and the same rules apply at every depth. Map keys are data and are
 never checked against the schema; each entry's value merges under the map's
 value type, so `dict[str, DecoderSpec]` entries descend into their variants
-and `dict[str, str]` entries merge key by key. Lists are set wholesale by
-whichever layer wrote them last; model-shaped elements are checked, and an
-unknown key inside one is reported as `items[0].bogus`.
+and `dict[str, str]` entries merge key by key. The schema's default map is the
+lowest layer of a map slot: a default entry survives a layer that adds another
+key, and a layer's entry composes over the default entry of the same key,
+through a default union entry's tag included. Lists are set wholesale by
+whichever layer wrote them last; every element of a model or union list is
+checked, so a string, a number, `null` or a nested list where a mapping is
+declared is refused as `encoders[0]`, and an unknown key inside an element is
+reported as `items[0].bogus`.
 
-Names a layer carries for computed and derived fields are accepted and
-dropped, so a document produced by `model_dump()` composes back without
-error. A model declaring `extra="ignore"` has its unknown keys skipped without
-a record; every other model refuses them.
+Names a document layer (a file, a mapping, a profile, an overlay, a file
+source) carries for computed and derived fields are accepted and dropped, so
+a document produced by `model_dump()` composes back without error. An
+override, a `Settings.load(**values)` keyword, or a textual source (the
+environment, a dotenv file, the command line) is never a dump, so there such
+a name is refused as `UnknownKeyError` saying the field is computed. A model
+declaring `extra="ignore"` has its unknown keys skipped without a record;
+every other model refuses them.
+
+Before any tag is known, a key is merged under the type the variants that
+declare it agree on. A field the root declares counts as declared by every
+variant, so a variant that shadows it with another annotation (`width: int`
+under a root `width: float`) or with another optionality (`att: Spec | None`
+beside `att: Spec`) makes the variants disagree, and the key is refused until
+the tag is set in the same or an earlier layer.
 
 ## Interpolation and the resolver registry
 
@@ -521,9 +568,15 @@ The grammar is OmegaConf's:
 - `\${literal}` escapes.
 
 A cycle between references is reported as a cycle, and nesting deeper than 64
-levels is refused. A string at a model, union or map slot is refused as the
-wrong shape before interpolation runs, so `section: ${other}` never pastes a
-subtree; expressions live on leaves.
+levels is refused. An expression may sit at a leaf, a list, a map or a model
+slot: `section: ${other}` pastes the subtree `other` resolves to, and
+`tags: ${oc.dict.keys:paths}` fills a `tuple[str, ...]` from a resolver. The
+resolved tree is checked against the schema once more, so a resolver result of
+the wrong shape or type is refused with the slot's path and the layer that
+wrote the expression, and text a resolver produced at a non-`str` leaf is
+decoded by the annotation the way a textual layer's text is. A union slot is
+the exception: its tag must be a literal at merge time, so a string there is
+refused as the wrong shape.
 
 The built-in resolvers mirror OmegaConf's: `oc.env:VAR[,default]`,
 `oc.select:path[,default]` (a lenient lookup; `None` or the default when the
@@ -637,7 +690,7 @@ assert p["optimizer.betas"].label == "default"
 out_dir = p["trainer.out_dir"]
 assert out_dir.kind == "file" and out_dir.name == "run.yaml"
 assert out_dir.expression == "${paths.data_dir}/runs/${oc.env:RUN_USER,anon}"
-assert p["trainer.log_dir"].expression == "${trainer.out_dir}/logs"
+assert p["trainer.log_dir"].expression == "${.out_dir}/logs"
 
 assert [layer.origin.label for layer in run.layers] == [
     "defaults:paths",
@@ -821,8 +874,12 @@ errors at a boundary never parses message text:
 `InterpolationError` is a sibling of `ConfigError`, also a `ValueError`,
 raised for an unresolved reference, an unknown resolver, a resolver that
 raised, a cycle, or a syntax error; it carries the `path` of the leaf being
-resolved. Validation failures of the resolved tree surface as
-`didactic.api.ValidationError` from the single `model_validate` call.
+resolved. What the engine cannot check (an `Annotated` constraint, a
+validator, an axiom) is left to the model, and a failure there surfaces as
+`didactic.api.ValidationError` from the single validation call; an entry
+raised inside a nested model is reported by the outer class with its `loc`
+prefixed by the field path (`("trainer", "mode")`), and sibling fields keep
+being collected.
 
 ## The hygiene guarantee
 
@@ -835,8 +892,9 @@ schema with nested models, unions behind optional slots and maps, a profile,
 groups, overlays and overrides from TOML, neither `panproto` nor `yaml` (nor
 `torch` or `transformers`) is present in `sys.modules`; composing the same
 tree from YAML adds `yaml` and nothing else. The one exposure is schema-side:
-a model carrying a class-level `@dx.axiom` imports `panproto` when it
-validates, and that is the schema's choice rather than the engine's.
+a model that declares `__axioms__` imports `panproto` when it validates (at
+compose time, not at class definition), and that is the schema's choice rather
+than the engine's.
 
 ## Lower-level pieces
 

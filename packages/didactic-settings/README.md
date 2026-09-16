@@ -50,7 +50,7 @@ class Sgd(OptimizerSpec):
 class TrainerSpec(dx.Model, extra="forbid"):
     epochs: int = 1
     out_dir: str = "runs"
-    log_dir: str = "${trainer.out_dir}/logs"
+    log_dir: str = "${.out_dir}/logs"
 
 
 class RunSpec(dx.Model, extra="forbid"):
@@ -76,8 +76,9 @@ config-group fragments (`optimizer: adam` loads `conf/optimizer/adam.yaml`);
 `groups=` replaces the file's choice for a slot; `profile="dev"` loads
 `conf/profiles/dev.yaml`; an override whose key contains `/`
 (`model/type_encoder=lstm`) selects a nested group and one without sets a
-field, decoded by the leaf's annotation. A key the schema does not declare, at any depth and in any layer,
-is refused with its dotted path and the layer that set it.
+field, decoded by the leaf's annotation. A key the schema does not declare,
+at any depth and in any layer, is refused with its dotted path and the layer
+that set it, and so is a value of the wrong type.
 
 ## Class-based settings
 

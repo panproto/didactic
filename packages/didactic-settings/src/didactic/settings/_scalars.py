@@ -1,11 +1,15 @@
-"""Text to value: the stdlib scalar grammar and annotation-directed decoding.
+"""Text to value: the stdlib scalar grammar, decoding and the typed check.
 
 Override values, environment variables, dotenv lines and CLI arguments
 arrive as text. Two readings are provided: :func:`parse_scalar` is the
 schema-free grammar (null, booleans, numbers, JSON lists and objects,
 quoted strings, bare words) used where no annotation is at hand, and
 :func:`decode_text` reads text for a known leaf annotation, so ``"123"``
-stays a string under ``str`` and becomes an integer under ``int``.
+stays a string under ``str`` and becomes an integer under ``int``. Values
+that arrive already typed (a file, a mapping, a ``(key, value)`` pair)
+are checked against the leaf annotation by :func:`check_value`, so a
+string where an integer is declared is refused with the leaf's path and
+the layer that set it.
 """
 
 from __future__ import annotations
@@ -13,11 +17,17 @@ from __future__ import annotations
 import enum
 import json
 import re
-from types import NoneType, UnionType
-from typing import TYPE_CHECKING, Literal, Union, cast, get_args, get_origin
+from collections.abc import Callable, Mapping, Sequence
+from datetime import date, datetime, time
+from decimal import Decimal
+from pathlib import PurePath
+from types import EllipsisType, NoneType, UnionType
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
+from uuid import UUID
 
 import didactic.api as dx
 from didactic.settings._errors import CoercionError, OverrideSyntaxError
+from didactic.settings._interpolation import is_whole_expression, mentions_expression
 from didactic.types import unwrap_annotated
 
 if TYPE_CHECKING:
@@ -167,9 +177,13 @@ def decode_text(
         member. An ``Enum`` is matched by member name, then by value, and
         the member's value is returned. ``tuple[T, ...]`` and
         ``frozenset[T]`` read JSON when the text starts with ``[`` and
-        otherwise split on commas, decoding each item as ``T``. A map or
-        model slot requires JSON object text. Any other annotation falls
-        back to :func:`parse_scalar`.
+        otherwise split on commas outside brackets, braces and quotes,
+        decoding each item as ``T``. A map or model slot requires JSON
+        object text. Any other annotation falls back to
+        :func:`parse_scalar`. Text holding a ``${...}`` expression is
+        returned as it is, whatever the annotation, so interpolation can
+        resolve it; the resolved value is checked against the annotation
+        afterwards.
 
     Raises
     ------
@@ -185,7 +199,9 @@ def _decode(text: str, typ: object, *, path: str, origin: Origin | None) -> Conf
     head = get_origin(typ)
     if head is Union or head is UnionType:
         return _decode_union(text, get_args(typ), path=path, origin=origin)
-    if typ is str:
+    if (head is tuple or head is frozenset) and not is_whole_expression(text):
+        return _decode_sequence(text, get_args(typ)[0], path=path, origin=origin)
+    if typ is str or mentions_expression(text):
         return text
     if typ is bool:
         return _decode_bool(text, path=path, origin=origin)
@@ -213,8 +229,6 @@ def _decode_structured(
     enum_class = _enum_class(typ)
     if enum_class is not None:
         return _decode_enum(text, enum_class, path=path, origin=origin)
-    if head is tuple or head is frozenset:
-        return _decode_sequence(text, get_args(typ)[0], path=path, origin=origin)
     if head is dict or _is_model(typ):
         stripped = text.strip()
         if stripped.startswith("{"):
@@ -302,8 +316,40 @@ def _decode_sequence(
         return []
     return [
         _decode(piece.strip(), item, path=path, origin=origin)
-        for piece in stripped.split(",")
+        for piece in split_items(stripped)
     ]
+
+
+_CLOSERS = {"[": "]", "{": "}", "(": ")"}
+
+
+def split_items(text: str) -> list[str]:
+    """Split text on the commas outside brackets, braces, parentheses and quotes.
+
+    ``a,[1,2],"x,y",${oc.select:p,d}`` gives four items: the comma inside
+    a bracketed group, a quoted string or a ``${...}`` expression does
+    not separate.
+    """
+    items: list[str] = []
+    depth: list[str] = []
+    quote: str | None = None
+    start = 0
+    for index, char in enumerate(text):
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+        elif char in _CLOSERS:
+            depth.append(_CLOSERS[char])
+        elif depth and char == depth[-1]:
+            depth.pop()
+        elif char == "," and not depth:
+            items.append(text[start:index])
+            start = index + 1
+    items.append(text[start:])
+    return items
 
 
 def _refused(
@@ -321,4 +367,182 @@ def _render(typ: object) -> str:
     return repr(typ).replace("typing.", "")
 
 
-__all__ = ["decode_text", "parse_override", "parse_scalar", "validate_override_key"]
+def render_annotation(annotation: object) -> str:
+    """Render an annotation the way error messages name it.
+
+    A class is named by ``__name__``; every other form (a union, a
+    literal, a parameterised container) by its ``repr`` with the
+    ``typing.`` prefix dropped.
+    """
+    return _render(annotation)
+
+
+def check_value(
+    value: ConfigValue,
+    annotation: object,
+    *,
+    path: str,
+    origin: Origin | None = None,
+) -> None:
+    """Refuse a typed value the leaf annotation does not admit.
+
+    Parameters
+    ----------
+    value
+        The value as a file, a mapping, a ``(key, value)`` pair, a
+        resolver or a settings source supplied it.
+    annotation
+        The leaf's annotation, read as :func:`decode_text` reads it.
+    path
+        Dotted path of the leaf, for the error message.
+    origin
+        The layer that set the value, for the error message.
+
+    Raises
+    ------
+    CoercionError
+        When the value does not inhabit the annotation: ``bool`` never
+        satisfies ``int``, ``int`` satisfies ``float``, ``None`` needs an
+        optional annotation, a ``Literal`` or ``Enum`` needs a member (or
+        a member's value) of the same type, a ``Path``, ``datetime``,
+        ``date``, ``time``, ``UUID``, ``Decimal`` or ``bytes`` leaf takes
+        its JSON text form, and a list or mapping is checked element by
+        element. A string holding a ``${...}`` expression is admitted
+        everywhere and checked again once resolved; an annotation the
+        engine does not know (``Any``, a protocol, a type variable) admits
+        every value.
+    """
+    if admits(value, annotation):
+        return
+    expected = render_annotation(_unwrap(annotation))
+    where = f" (set by {origin.label})" if origin is not None else ""
+    got = _kind(value) if isinstance(value, Mapping | list | tuple) else repr(value)
+    msg = f"Config key {path!r} expects {expected}{where}; got {got}"
+    raise CoercionError(msg, path=path, expected=expected, text=got)
+
+
+def _kind(value: object) -> str:
+    return "null" if value is None else type(value).__name__
+
+
+def _unwrap(annotation: object) -> object:
+    base, _ = unwrap_annotated(cast("TypeForm", annotation))
+    return base
+
+
+def admits(value: object, annotation: object) -> bool:
+    """Whether a typed value inhabits an annotation, as :func:`check_value` reads it."""
+    return _admits(value, annotation)
+
+
+def _admits(value: object, annotation: object) -> bool:
+    if isinstance(value, str) and mentions_expression(value):
+        return True
+    typ = _unwrap(annotation)
+    if typ is Any or typ is object:
+        return True
+    head = get_origin(typ)
+    if head is Union or head is UnionType:
+        return any(_admits(value, member) for member in get_args(typ))
+    if head is Literal:
+        return any(_same(member, value) for member in get_args(typ))
+    if head is None and isinstance(typ, type):
+        return _admits_class(value, typ)
+    return _admits_generic(value, typ, head, get_args(typ))
+
+
+def _admits_generic(
+    value: object, typ: object, head: object, args: tuple[object, ...]
+) -> bool:
+    if typ is None:
+        return value is None
+    if head is dict or head is Mapping:
+        return _admits_mapping(value, args)
+    if head is tuple:
+        return _admits_tuple(value, args)
+    if head is list or head is frozenset or head is set or head is Sequence:
+        return _admits_items(value, args[0] if args else Any)
+    return True
+
+
+def _same(member: object, value: object) -> bool:
+    return type(member) is type(value) and member == value
+
+
+def _is_container(value: object) -> bool:
+    return isinstance(value, list | tuple | set | frozenset)
+
+
+_EXACT_CLASSES: dict[type, Callable[[object], bool]] = {
+    NoneType: lambda v: v is None,
+    bool: lambda v: isinstance(v, bool),
+    int: lambda v: isinstance(v, int) and not isinstance(v, bool),
+    float: lambda v: isinstance(v, int | float) and not isinstance(v, bool),
+    str: lambda v: isinstance(v, str),
+    bytes: lambda v: isinstance(v, str | bytes),
+    dict: lambda v: isinstance(v, Mapping),
+    list: _is_container,
+    tuple: _is_container,
+    set: _is_container,
+    frozenset: _is_container,
+}
+"""What a value must be for a bare class annotation."""
+
+
+def _admits_class(value: object, typ: type) -> bool:
+    exact = _EXACT_CLASSES.get(typ)
+    if exact is not None:
+        return exact(value)
+    if issubclass(typ, enum.Enum):
+        return isinstance(value, typ) or any(
+            _same(member.value, value) for member in typ
+        )
+    if issubclass(typ, Decimal):
+        return isinstance(value, str | int | float | Decimal) and not isinstance(
+            value, bool
+        )
+    if issubclass(typ, datetime | date | time | PurePath | UUID):
+        return isinstance(value, str | typ)
+    if issubclass(typ, dx.Model):
+        return isinstance(value, Mapping | typ)
+    return True
+
+
+def _admits_mapping(value: object, args: tuple[object, ...]) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    entries = cast("Mapping[object, object]", value)
+    item = args[1] if len(args) == 2 else Any
+    return all(_admits(entry, item) for entry in entries.values())
+
+
+def _admits_tuple(value: object, args: tuple[object, ...]) -> bool:
+    if len(args) == 2 and isinstance(args[1], EllipsisType):
+        return _admits_items(value, args[0])
+    if not isinstance(value, list | tuple):
+        return False
+    items = cast("Sequence[object]", value)
+    if not args:
+        return True
+    return len(items) == len(args) and all(
+        _admits(item, arg) for item, arg in zip(items, args, strict=True)
+    )
+
+
+def _admits_items(value: object, item: object) -> bool:
+    if not isinstance(value, list | tuple | set | frozenset):
+        return False
+    items = cast("Sequence[object] | set[object] | frozenset[object]", value)
+    return all(_admits(element, item) for element in items)
+
+
+__all__ = [
+    "admits",
+    "check_value",
+    "decode_text",
+    "parse_override",
+    "parse_scalar",
+    "render_annotation",
+    "split_items",
+    "validate_override_key",
+]

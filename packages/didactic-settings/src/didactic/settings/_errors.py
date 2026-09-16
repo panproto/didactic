@@ -47,14 +47,15 @@ class UnknownKeyError(ConfigError):
     allowed
         Sorted field names accepted at the enclosing node.
     declared_by
-        Tags of the union variants that declare the key; empty when no
-        variant does, or when the node is a plain model.
+        Primary tags of the union variants that declare the key, as the
+        live discriminator values; empty when no variant does, or when
+        the node is a plain model.
     set_by
         The origin of the layer that set the key.
     """
 
     allowed: tuple[str, ...]
-    declared_by: tuple[str, ...]
+    declared_by: tuple[object, ...]
     set_by: Origin | None
 
     def __init__(
@@ -63,7 +64,7 @@ class UnknownKeyError(ConfigError):
         *,
         path: str,
         allowed: tuple[str, ...] = (),
-        declared_by: tuple[str, ...] = (),
+        declared_by: tuple[object, ...] = (),
         set_by: Origin | None = None,
     ) -> None:
         super().__init__(message, path=path)
@@ -84,11 +85,12 @@ class UnknownVariantError(ConfigError):
     value
         The discriminator value as it arrived.
     registered
-        The registered tags, rendered as strings and sorted.
+        The registered tags as the live discriminator values, sorted by
+        type and then by value.
     """
 
     value: object
-    registered: tuple[str, ...]
+    registered: tuple[object, ...]
 
     def __init__(
         self,
@@ -96,7 +98,7 @@ class UnknownVariantError(ConfigError):
         *,
         path: str,
         value: object,
-        registered: tuple[str, ...] = (),
+        registered: tuple[object, ...] = (),
     ) -> None:
         super().__init__(message, path=path)
         self.value = value

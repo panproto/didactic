@@ -18,7 +18,7 @@ import didactic.api as dx
 from didactic.types import unwrap_annotated
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
     from didactic.settings._values import KeyPath
     from didactic.types._types import TypeForm
@@ -252,9 +252,68 @@ def all_tags(root: type[dx.TaggedUnion]) -> tuple[object, ...]:
     return tuple(variants_of(root))
 
 
-def registered_tags(root: type[dx.TaggedUnion]) -> tuple[str, ...]:
-    """Every registered discriminator value rendered as text, sorted."""
-    return tuple(sorted(str(tag) for tag in variants_of(root)))
+def _tag_order(tag: object) -> tuple[str, float | str]:
+    if isinstance(tag, bool | int | float):
+        return (type(tag).__name__, float(tag))
+    return (type(tag).__name__, str(tag))
+
+
+def sorted_tags(tags: Iterable[object]) -> tuple[object, ...]:
+    """Sort discriminator values by type name, then by numeric or text value."""
+    return tuple(sorted(tags, key=_tag_order))
+
+
+def registered_tags(root: type[dx.TaggedUnion]) -> tuple[object, ...]:
+    """Every registered discriminator value, live and sorted.
+
+    Messages render the tuple with ``repr``, so a string tag reads
+    ``'lstm'`` and an integer tag ``1``, and a typed mismatch (the text
+    ``'1'`` against a ``Literal[1]`` union) is visible.
+    """
+    return sorted_tags(variants_of(root))
+
+
+def variant_for_tag(
+    root: type[dx.TaggedUnion], tag: object
+) -> type[dx.TaggedUnion] | None:
+    """Find the variant registered under a tag of the same type and value.
+
+    Matching by type as well as value keeps ``True`` from selecting a
+    ``Literal[1]`` variant and ``1`` from selecting a ``Literal[True]``
+    one, which plain dictionary lookup would allow.
+    """
+    for candidate, variant in variants_of(root).items():
+        if type(candidate) is type(tag) and candidate == tag:
+            return variant
+    return None
+
+
+def unique_variants(root: type[dx.TaggedUnion]) -> tuple[type[dx.TaggedUnion], ...]:
+    """Every registered variant class once, in registration order."""
+    return tuple(dict.fromkeys(variants_of(root).values()))
+
+
+def primary_tag(root: type[dx.TaggedUnion], variant: type[dx.TaggedUnion]) -> object:
+    """Name a variant by its first literal tag, else by its registry key."""
+    tags = variant_tags(variant, discriminator_of(root))
+    if tags:
+        return tags[0]
+    for tag, registered in variants_of(root).items():
+        if registered is variant:
+            return tag
+    msg = f"{variant.__name__} is not a registered variant of {root.__name__}"
+    raise TypeError(msg)
+
+
+def discriminator_aliases(root: type[dx.TaggedUnion]) -> frozenset[str]:
+    """Every alias the root or a variant gives the discriminator field."""
+    disc = discriminator_of(root)
+    names: set[str] = set()
+    for cls in (root, *unique_variants(root)):
+        spec = cls.__field_specs__.get(disc)
+        if spec is not None and spec.alias is not None:
+            names.add(spec.alias)
+    return frozenset(names)
 
 
 def default_variant(spec: dx.FieldSpec | None) -> type[dx.TaggedUnion] | None:
@@ -275,28 +334,33 @@ def default_variant(spec: dx.FieldSpec | None) -> type[dx.TaggedUnion] | None:
     return cls
 
 
-def variant_owners(root: type[dx.TaggedUnion], key: str) -> tuple[str, ...]:
-    """Sorted tags of the registered variants whose fields include ``key``."""
-    owners = {
-        str(tag)
-        for tag, variant in variants_of(root).items()
+def variant_owners(root: type[dx.TaggedUnion], key: str) -> tuple[object, ...]:
+    """Sorted primary tags of the registered variants whose fields include ``key``.
+
+    A variant registered under several literals is listed once, by its
+    first literal.
+    """
+    return sorted_tags(
+        primary_tag(root, variant)
+        for variant in unique_variants(root)
         if key in field_table(variant)
-    }
-    return tuple(sorted(owners))
+    )
 
 
 def all_variant_fields(
     root: type[dx.TaggedUnion],
-) -> dict[str, tuple[tuple[str, dx.FieldSpec], ...]]:
-    """Every key any variant accepts, mapped to ``(tag, spec)`` per variant.
+) -> dict[str, tuple[tuple[object, dx.FieldSpec], ...]]:
+    """Every key any variant accepts, mapped to ``(primary tag, spec)`` per variant.
 
     Root-declared shared fields appear under every variant. Aliases map to
-    the same spec as the field name.
+    the same spec as the field name. A variant registered under several
+    literals contributes one entry per key.
     """
-    table: dict[str, list[tuple[str, dx.FieldSpec]]] = {}
-    for tag, variant in variants_of(root).items():
+    table: dict[str, list[tuple[object, dx.FieldSpec]]] = {}
+    for variant in unique_variants(root):
+        tag = primary_tag(root, variant)
         for key, spec in field_table(variant).items():
-            table.setdefault(key, []).append((str(tag), spec))
+            table.setdefault(key, []).append((tag, spec))
     return {key: tuple(owners) for key, owners in table.items()}
 
 
@@ -362,14 +426,19 @@ __all__ = [
     "all_tags",
     "all_variant_fields",
     "default_variant",
+    "discriminator_aliases",
     "discriminator_of",
     "field_names",
     "field_table",
     "is_union_root",
+    "primary_tag",
     "registered_tags",
     "settable_paths",
+    "sorted_tags",
     "target_of",
     "target_of_type",
+    "unique_variants",
+    "variant_for_tag",
     "variant_owners",
     "variant_tags",
     "variants_of",

@@ -19,6 +19,7 @@ import pytest
 
 import didactic.api as dx
 from didactic.settings import (
+    CoercionError,
     ConfigError,
     UnknownKeyError,
     UnknownVariantError,
@@ -29,6 +30,7 @@ from didactic.settings import (
 from ._schemas import (
     Adam,
     AdditiveAttention,
+    AttentionSpec,
     DotAttention,
     GruEncoder,
     LinearDecoder,
@@ -48,7 +50,7 @@ def _write(path: Path, content: str) -> Path:
     return path
 
 
-# -- (a) tag read first, selected mode, per-leaf provenance ------------------
+# -- (a) tag read first, selected mode, per-leaf provenance ----------------------------
 
 
 def test_a_selected_variant_from_file_through_optional_slot(tmp_path: Path) -> None:
@@ -81,7 +83,7 @@ def test_a_discriminator_is_read_before_sibling_keys(tmp_path: Path) -> None:
     assert spec.model.type_encoder == LstmEncoder(hidden=3)
 
 
-# -- (b) provisional mode on a root-shared field, default variant at settle --
+# -- (b) provisional mode on a root-shared field, default variant at settle ------------
 
 
 def test_b_root_shared_field_without_tag_settles_to_default_variant(
@@ -161,7 +163,7 @@ def test_b_conflicting_variant_field_then_tag_is_refused_in_both_orders(
     assert backward.value.declared_by == ("transformer",)
 
 
-# -- (c) no tag and no default variant: refused at settle, naming the origin --
+# -- (c) no tag and no default variant: refused at settle, naming the origin -----------
 
 
 def test_c_tagless_optional_slot_is_refused_at_settle_with_origin(
@@ -205,7 +207,7 @@ def test_c_tagless_override_on_optional_slot_names_the_override(
     assert "selects no variant of TypeEncoderSpec" in str(info.value)
 
 
-# -- (d) selected mode refuses another variant's field ------------------------
+# -- (d) selected mode refuses another variant's field ---------------------------------
 
 
 def test_d_other_variants_field_is_refused_naming_its_owner(tmp_path: Path) -> None:
@@ -265,7 +267,7 @@ def test_d_key_declared_by_several_variants_is_listed_in_plural(
     )
 
 
-# -- (e) textual override against a tag already in the tree -------------------
+# -- (e) textual override against a tag already in the tree ----------------------------
 
 
 def test_e_textual_override_is_checked_against_the_accumulated_tag(
@@ -337,7 +339,7 @@ def test_e_json_text_override_at_a_union_slot_decodes_to_one_overlay(
     assert run.provenance["model.type_encoder.hidden"].label == label
 
 
-# -- (f) nested targets inside a selected variant ------------------------------
+# -- (f) nested targets inside a selected variant --------------------------------------
 
 
 def test_f_nested_model_and_union_inside_a_variant_are_stamped_per_leaf(
@@ -403,7 +405,7 @@ def test_f_dotted_override_descends_two_unions_deep(tmp_path: Path) -> None:
     assert info.value.path == "model.type_encoder.attention.bogus"
 
 
-# -- (g) unions as list elements ---------------------------------------------
+# -- (g) unions as list elements -------------------------------------------------------
 
 
 def test_g_union_list_elements_are_checked_and_the_list_is_one_leaf(
@@ -450,7 +452,7 @@ def test_g_list_replaces_wholesale_across_layers(tmp_path: Path) -> None:
     assert run.provenance["encoders"].label == "overlay:second.yaml"
 
 
-# -- computed fields on a variant --------------------------------------------
+# -- computed fields on a variant ------------------------------------------------------
 
 
 def test_computed_field_key_on_a_variant_is_accepted_and_labelled_default(
@@ -492,7 +494,7 @@ def test_recomposing_a_resolved_document_changes_nothing(tmp_path: Path) -> None
     assert again == once
 
 
-# -- integer discriminators delivered as text --------------------------------
+# -- integer discriminators delivered as text ------------------------------------------
 
 
 def test_literal_int_discriminator_is_decoded_from_override_text() -> None:
@@ -511,11 +513,11 @@ def test_literal_int_discriminator_unknown_text_lists_registered_tags() -> None:
     e = info.value
     assert e.path == "stage.code"
     assert str(e.value) == "3"
-    assert e.registered == ("1", "2")
-    assert "Stage registers: ['1', '2']" in str(e)
+    assert e.registered == (1, 2)
+    assert "Stage registers: [1, 2]" in str(e)
 
 
-# -- tags ---------------------------------------------------------------------
+# -- tags ------------------------------------------------------------------------------
 
 
 def test_unknown_tag_lists_registered_variants(tmp_path: Path) -> None:
@@ -693,7 +695,7 @@ def test_provisional_target_conflict_asks_for_the_tag() -> None:
     assert spec.slot == B(width="8")
 
 
-# -- plain-model rules that the union path shares ----------------------------
+# -- plain-model rules that the union path shares --------------------------------------
 
 
 def test_extra_ignore_model_drops_unknown_keys_and_records_nothing() -> None:
@@ -752,7 +754,7 @@ def test_union_selected_by_group_then_field_from_file_body(tmp_path: Path) -> No
     assert p["model.type_encoder.width"].label == "file:run.yaml"
 
 
-# -- default-variant edge cases ----------------------------------------------
+# -- default-variant edge cases --------------------------------------------------------
 
 
 def test_bare_root_instance_default_selects_no_variant() -> None:
@@ -795,3 +797,210 @@ def test_variant_with_several_literals_settles_to_its_first_tag() -> None:
     with pytest.raises(UnknownVariantError) as info:
         compose(schema=Holder, overlays=[{"slot": {"kind": "beta"}}])
     assert info.value.registered == ("a", "alpha")
+
+
+# -- tags are matched by type as well as value -----------------------------------------
+
+
+def test_bool_tag_does_not_alias_an_int_literal() -> None:
+    with pytest.raises(UnknownVariantError) as info:
+        compose(schema=Pipeline, overlays=[{"stage": {"code": True}}])
+    assert str(info.value) == (
+        "Unknown variant 'stage.code' = True (set by overlay:#0); "
+        "Stage registers: [1, 2]"
+    )
+    assert info.value.value is True
+    assert info.value.registered == (1, 2)
+
+
+def test_int_tag_does_not_alias_a_bool_literal() -> None:
+    class Switch(dx.TaggedUnion, discriminator="on", extra="forbid"):
+        pass
+
+    class On(Switch):
+        on: Literal[True] = True
+        y: int = 0
+
+    class Off(Switch):
+        on: Literal[False] = False
+
+    class Holder(dx.Model, extra="forbid"):
+        sw: Switch = dx.field(default_factory=On)
+
+    for tag in (1, 0):
+        with pytest.raises(UnknownVariantError) as info:
+            compose(schema=Holder, overlays=[{"sw": {"on": tag, "y": 2}}])
+        assert str(info.value) == (
+            f"Unknown variant 'sw.on' = {tag} (set by overlay:#0); "
+            "Switch registers: [False, True]"
+        )
+    assert compose(schema=Holder, overlays=[{"sw": {"on": False}}]).sw == Off()
+    assert compose(schema=Holder, overrides=["sw.on=true", "sw.y=3"]).sw == On(y=3)
+
+
+def test_typed_text_tag_on_an_int_literal_union_shows_the_type_mismatch() -> None:
+    with pytest.raises(UnknownVariantError) as info:
+        compose(schema=Pipeline, overrides=[("stage.code", "1")])
+    assert str(info.value) == (
+        "Unknown variant 'stage.code' = '1' (set by override:stage.code=\"1\"); "
+        "Stage registers: [1, 2]"
+    )
+
+
+# -- provisional mode with a shadowed root field ---------------------------------------
+
+
+def test_variant_shadowing_a_root_field_with_another_type_needs_the_tag_first() -> None:
+    class Root(dx.TaggedUnion, discriminator="kind", extra="forbid"):
+        width: float = 1.0
+
+    class Narrow(Root):
+        kind: Literal["narrow"] = "narrow"
+        width: int = 1
+
+    class Wide(Root):
+        kind: Literal["wide"] = "wide"
+        m: int = 0
+
+    class Holder(dx.Model, extra="forbid"):
+        r: Root = dx.field(default_factory=Narrow)
+
+    for override in ("r.width=2.5", "r.width=2"):
+        with pytest.raises(ConfigError) as info:
+            compose(schema=Holder, overrides=[override])
+        assert str(info.value) == (
+            "Config key 'r.width' is declared by variants 'narrow' and 'wide' of "
+            "Root with different types; set r.kind in the same or an earlier layer"
+        )
+    narrow = compose(schema=Holder, overrides=["r.kind=narrow", "r.width=2"])
+    assert narrow.r == Narrow(width=2)
+    with pytest.raises(CoercionError, match="expects int"):
+        compose(schema=Holder, overrides=["r.kind=narrow", "r.width=2.5"])
+    wide = compose(schema=Holder, overrides=["r.kind=wide", "r.width=2.5"])
+    assert wide.r == Wide(width=2.5)
+
+
+def test_variants_agreeing_on_a_root_field_merge_it_provisionally() -> None:
+    run = compose_traced(schema=RunSpec, overrides=["optimizer.lr=0.5"])
+    assert run.value.optimizer == Adam(lr=0.5)
+
+
+class OptRoot(dx.TaggedUnion, discriminator="kind", extra="forbid"):
+    """A root whose variants disagree only on the optionality of a field."""
+
+
+class StrictAtt(OptRoot):
+    kind: Literal["strict"] = "strict"
+    att: AttentionSpec = dx.field(default_factory=DotAttention)
+
+
+class LooseAtt(OptRoot):
+    kind: Literal["loose"] = "loose"
+    att: AttentionSpec | None = None
+
+
+class OptHolder(dx.Model, extra="forbid"):
+    r: OptRoot = dx.field(default_factory=LooseAtt)
+
+
+def test_optionality_counts_as_a_type_difference_in_provisional_mode() -> None:
+    with pytest.raises(ConfigError) as info:
+        compose(schema=OptHolder, overlays=[{"r": {"att": None}}])
+    assert str(info.value) == (
+        "Config key 'r.att' is declared by variants 'loose' and 'strict' of "
+        "OptRoot with different types; set r.kind in the same or an earlier layer"
+    )
+    loose = compose(schema=OptHolder, overlays=[{"r": {"kind": "loose", "att": None}}])
+    assert loose.r == LooseAtt(att=None)
+
+
+# -- variants registered under several literals ----------------------------------------
+
+
+def test_multi_literal_variant_is_named_once_in_owner_lists() -> None:
+    class Root(dx.TaggedUnion, discriminator="kind", extra="forbid"):
+        pass
+
+    class Both(Root):
+        kind: Literal["a", "alpha"] = "a"
+        n: int = 0
+
+    class Other(Root):
+        kind: Literal["b"] = "b"
+
+    class Holder(dx.Model, extra="forbid"):
+        slot: Root = dx.field(default_factory=Other)
+
+    alpha = compose(schema=Holder, overlays=[{"slot": {"kind": "alpha"}}]).slot
+    assert alpha == Both(kind="alpha")
+    with pytest.raises(UnknownKeyError) as info:
+        compose(schema=Holder, overlays=[{"slot": {"kind": "b", "n": 1}}])
+    assert str(info.value) == (
+        "Unknown config key 'slot.n' (set by overlay:#0): variant 'b' of Root "
+        "(set by overlay:#0) has no field 'n'; it belongs to variant 'a'"
+    )
+    assert info.value.declared_by == ("a",)
+
+
+# -- a discriminator given by alias ----------------------------------------------------
+
+
+def test_discriminator_given_by_alias_selects_the_variant() -> None:
+    class Root(dx.TaggedUnion, discriminator="kind", extra="forbid"):
+        pass
+
+    class Vee(Root):
+        kind: Literal["v"] = dx.field(default="v", alias="type")
+        n: int = 0
+
+    class Dub(Root):
+        kind: Literal["w"] = dx.field(default="w", alias="type")
+        m: int = 0
+
+    class Holder(dx.Model, extra="forbid"):
+        r: Root = dx.field(default_factory=Vee)
+
+    run = compose_traced(schema=Holder, overlays=[{"r": {"type": "w", "m": 2}}])
+    assert run.value.r == Dub(m=2)
+    assert run.tree == {"r": {"kind": "w", "m": 2}}
+    assert run.provenance["r.kind"].label == "overlay:#0"
+    with pytest.raises(UnknownVariantError, match="Unknown variant 'r.kind' = 'zzz'"):
+        compose(schema=Holder, overlays=[{"r": {"type": "zzz"}}])
+    with pytest.raises(UnknownVariantError, match="is the interpolation"):
+        compose(schema=Holder, overlays=[{"r": {"type": "${x}"}}])
+    switched = compose(
+        schema=Holder,
+        overlays=[{"r": {"kind": "v", "n": 1}}, {"r": {"type": "w", "m": 2}}],
+    )
+    assert switched.r == Dub(m=2)
+
+
+# -- an empty node names the layer that created it -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "node", [{}, {"declared_output": 1}], ids=["empty", "computed-only"]
+)
+def test_empty_node_at_an_optional_union_slot_names_the_layer(
+    node: dict[str, int],
+) -> None:
+    with pytest.raises(ConfigError) as info:
+        compose(schema=RunSpec, overlays=[{"model": {"type_encoder": node}}])
+    assert str(info.value) == (
+        "Config key 'model.type_encoder' selects no variant of TypeEncoderSpec "
+        "(set by overlay:#0): set model.type_encoder.kind to one of "
+        "['gru', 'lstm', 'transformer']"
+    )
+
+
+def test_empty_node_entry_gives_way_to_a_later_leaf_write() -> None:
+    run = compose_traced(
+        schema=RunSpec,
+        overlays=[
+            {"model": {"type_encoder": {}}},
+            {"model": {"type_encoder": {"kind": "lstm"}}},
+        ],
+    )
+    assert run.value.model.type_encoder == LstmEncoder()
+    assert run.provenance["model.type_encoder.kind"].label == "overlay:#1"
+    assert "model.type_encoder" not in run.provenance

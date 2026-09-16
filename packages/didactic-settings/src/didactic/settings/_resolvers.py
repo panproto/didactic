@@ -21,6 +21,7 @@ from didactic.settings._interpolation import (
     MissingReferenceError,
     ResolverFn,
     active_path,
+    list_resolvers,
     lookup,
     register_resolver,
 )
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 
 def _oc_env(*args: str) -> str:
     """``${oc.env:VAR}`` / ``${oc.env:VAR,default}``: an environment variable."""
-    if not args:
+    if not args or not args[0]:
         msg = "oc.env requires at least one argument"
         raise InterpolationError(msg)
     var = args[0]
@@ -51,7 +52,7 @@ def _oc_select(*args: str) -> ConfigValue:
     otherwise the default read with the scalar grammar, or ``None`` when
     no default is given.
     """
-    if not args:
+    if not args or not args[0]:
         msg = "oc.select requires a path and an optional default"
         raise InterpolationError(msg)
     try:
@@ -71,7 +72,7 @@ def _oc_decode(*args: str) -> str:
     ``base64`` (the default) decodes the value as base64-encoded UTF-8;
     ``ascii`` and ``utf-8`` pass the value through.
     """
-    if not args:
+    if not args or not args[0]:
         msg = "oc.decode requires at least a value"
         raise InterpolationError(msg)
     value = args[0]
@@ -100,7 +101,7 @@ def _oc_deprecated(*args: str) -> ConfigValue:
     ``new_path``. ``$OLD_KEY`` in the message is replaced by the path of
     the leaf holding the expression and ``$NEW_KEY`` by ``new_path``.
     """
-    if not args:
+    if not args or not args[0]:
         msg = "oc.deprecated requires a replacement path"
         raise InterpolationError(msg)
     new_path = args[0]
@@ -122,7 +123,7 @@ def _oc_create(*args: str) -> ConfigValue:
 
 
 def _mapping_at(name: str, args: tuple[str, ...]) -> Mapping[str, ConfigValue]:
-    if not args:
+    if not args or not args[0]:
         msg = f"{name} requires a path"
         raise InterpolationError(msg)
     value = lookup(args[0])
@@ -156,11 +157,16 @@ _BUILTINS: Final[dict[str, ResolverFn]] = {
 def register_builtins(*, replace: bool = False) -> None:
     """Register every built-in resolver.
 
-    Called at import with ``replace=True``; call it again to restore a
-    built-in that was unregistered or shadowed.
+    Called at import with ``replace=True``. Called again without
+    ``replace`` it restores the built-ins that were unregistered and
+    leaves every registered name, built-in or not, as it is; with
+    ``replace`` it puts every built-in back in place of whatever holds
+    its name.
     """
+    registered = list_resolvers()
     for name, fn in _BUILTINS.items():
-        register_resolver(name, fn, replace=replace)
+        if replace or name not in registered:
+            register_resolver(name, fn, replace=replace)
 
 
 register_builtins(replace=True)
