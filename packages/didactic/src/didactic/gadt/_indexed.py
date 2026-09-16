@@ -123,7 +123,7 @@ class IndexedBy:
         # wider union visible in the annotation.
         try:
             classify(selected).encode(value)
-        except AssertionError:
+        except TypeError, ValueError:
             msg = (
                 f"value {value!r} does not inhabit the Python payload type "
                 f"selected by {expected_sort}"

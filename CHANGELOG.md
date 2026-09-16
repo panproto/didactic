@@ -7,6 +7,208 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-16
+
+### Added
+
+- `didactic-settings` ships the configuration composition engine ported
+  from bead's `bead.config.compose`. `didactic.settings.compose(path,
+  schema=...)` composes a validated model from a primary file and the
+  fragments its `defaults:` list selects, a `base` mapping, a profile
+  (a name under `profiles/` or a mapping), overlay files or mappings, and
+  dotted overrides, in that precedence; `compose_traced` returns the
+  value with the merged tree, the record and the ladder of `Layer`
+  records as a `Composed`; `compose_layers` runs the engine over a ladder
+  a caller assembled; `strict_merge` merges one mapping over another
+  under a schema. JSON joins TOML as a format read through the standard
+  library, everywhere the engine reads a file.
+- Union descent. A tagged-union field is descended rather than treated
+  as an opaque leaf: the discriminator is read before any sibling key,
+  the node's keys are checked against the selected variant's fields, and
+  a key belonging to another variant is refused naming both variants and
+  the layer that selected the one in force. A node no layer has tagged
+  merges provisionally and the settle pass, after the last layer,
+  injects the tag of the variant the field default is an instance of, so
+  `{momentum: 0.5}` then `{kind: sgd}` and the reverse compose to the
+  same tree. A later explicit tag switches the variant and drops the old
+  variant's private fields. Unions nest inside variants, `dict[str, T]`
+  entries and `tuple[T, ...]` elements; textual tags are decoded against
+  each variant's literal, so an integer-tagged union is selected from
+  the environment; a discriminator must be a literal, never an
+  interpolation.
+- Config groups. Rooted at each search root (the primary file's parent,
+  then `search_path`), a group is a directory named by the slot's dotted
+  path with `.` as `/`, and a fragment is one document in it holding the
+  slot's value. Three spellings feed one ordered selection table keyed by
+  slot: a one-key `{slot: name}` entry in the primary file's `defaults:`
+  list (Hydra's slash spelling is accepted; `null` records no selection),
+  the `groups=` mapping (`None` deselects), and override strings whose
+  key contains `/`. The table merges above `base` and below the file
+  body. A missing fragment is `MissingFragmentError` listing every path
+  tried and the names available.
+- Per-leaf provenance. Every leaf of the composed model carries an
+  `Origin` record (`kind`, `name`, `path`, `expression`, `label`), and
+  `Provenance` is an immutable sorted mapping from dotted leaf path to
+  origin with `paths`, `source_of`, `under`, `by_layer` and `to_dict`.
+  The record covers exactly the leaves of `model_dump_json()`: partial
+  overlays keep per-leaf attribution, subtree overwrites prune, leaves no
+  layer wrote are `default`, and an interpolated leaf keeps its layer and
+  gains the expression. The instance carries it as `__provenance__` and
+  `provenance_of(instance)` reads it back. A list is one leaf, so the
+  record stops at the list boundary.
+- Interpolation with a resolver registry: OmegaConf's grammar (absolute
+  and relative references, list indexing, nesting, concatenation,
+  resolver calls, escapes) resolved once over the settled tree, with
+  `register_resolver`, `unregister_resolver`, `list_resolvers`,
+  `active_root`, a per-call `resolvers=` overlay, `resolve_traced`, and
+  `lookup(path)`, which evaluates a path inside the active evaluation so
+  a cycle through a resolver is reported as a cycle. The built-in set is
+  `oc.env`, `oc.select`, `oc.decode`, `oc.deprecated`, `oc.create`,
+  `oc.dict.keys` and `oc.dict.values`. Field defaults may carry `${...}`
+  expressions; they are materialised before interpolation and resolve
+  against the composed tree.
+- `Settings.load(path, *, profile, groups, overlays, overrides,
+  search_path, resolvers, **values)` composes the primary file, its
+  groups, the profile, the overlays, the declared sources and the
+  overrides through the same engine; `Settings.load_traced` returns the
+  `Composed` record; `__search_path__` names directories holding
+  fragments and profiles. `Source` is a public base class implementing
+  `layer(schema)`. `EnvSource` and `DotEnvSource` read nested paths
+  (`APP_TRAINER__EPOCHS`), whole model, union and map slots as JSON
+  object text, and map entries below a map slot; `DotEnvSource` accepts
+  `export KEY=value`; `FileSource` takes `required=`; `CliSource` takes
+  dotted and `__`-joined keys. Text from every textual layer is decoded
+  by the leaf's annotation (`str`, `bool`, `int`, `float`, `Literal`,
+  `Enum`, `T | None`, `Annotated`, `tuple`, `frozenset`, JSON for slots).
+- Structured errors: `ConfigError` carries `path`; `UnknownKeyError`
+  (`allowed`, `declared_by`, `set_by`), `UnknownVariantError` (`value`,
+  `registered`), `MissingFragmentError` (`group`, `name`, `tried`,
+  `available`), `CoercionError` (`expected`, `text`) and
+  `OverrideSyntaxError`; `InterpolationError` carries the path of the
+  leaf being resolved.
+- `didactic.types.unwrap_annotated` is exported publicly.
+- Hygiene tests pin that composing from TOML imports neither `panproto`
+  nor `yaml` (nor `torch` or `transformers`), that composing from YAML
+  adds `yaml` only, that no engine module imports a forbidden name, and
+  that opening a YAML file without PyYAML names the
+  `didactic-settings[yaml]` extra.
+- bead's compose test suite is carried as the conformance spec under
+  `packages/didactic-settings/tests/conformance/`, with three textual
+  rewrites (`from bead.config.compose import` to
+  `from didactic.settings import`, `profile_dict=` to `base=`,
+  `extra=[overlay]` to `overlays=[overlay]`) plus two annotations on a
+  `root` dict and named resolver functions in place of lambdas so the
+  files pass strict pyright; no assertion changes.
+
+### Changed
+
+- A scalar field given a value of the wrong Python type (`"5"` or `2.0`
+  or `True` for `int`, `1` for `bool`, a number for `str`, and the
+  `bytes`, `Decimal`, `datetime`, `date`, `time` and `UUID` adapters
+  alike) is refused as a `ValidationError` entry of type `type_error`
+  with the field's `loc` and the message `expected int, got str`. The
+  adapters raised `AssertionError` before, which carried no location and
+  vanished under `python -O`.
+- A validation failure inside a nested model, a tagged-union variant or
+  a container of either is reported by the outer model: each inner entry
+  is re-located under the field name (`loc == ("trainer", "mode")`),
+  `ValidationError.model` is the outer class, and the outer model keeps
+  collecting its other fields' errors instead of stopping at the first
+  nested failure. Code matching `error.model is Inner` reads the
+  location from `loc` instead.
+- `Settings.__provenance__` is a `Provenance` of `Origin` records keyed
+  by dotted leaf path, not a `dict[str, str]` keyed by top-level field.
+  Code that compared `__provenance__["port"] == "env"` reads
+  `__provenance__["port"].label == "source:env"` (or `.kind ==
+  "source"` and `.name == "env"`); a default is labelled `default` and a
+  keyword override `override:port=9999`.
+- `FileSource` no longer drops unknown top-level keys silently; a key the
+  schema does not declare, at any depth, is refused as
+  `UnknownKeyError` with its dotted path and `(set by source:file)`.
+- `Settings` sources implement `Source.layer(schema)` returning a
+  `Layer`, replacing the private `fetch`; `separator`, `name` and
+  `required` are keyword-only. Sources sit above the profile and
+  overlays and below the overrides. `Settings.load(**values)` keys are
+  dotted paths with `__` as the separator and are typed overrides.
+- `Settings.__init_subclass__` refuses a field named after one of
+  `load`'s keywords (`path`, `profile`, `groups`, `overlays`,
+  `overrides`, `search_path`, `resolvers`) and two sources sharing a
+  name, both with `TypeError` at class creation.
+- Environment, dotenv and CLI text is decoded by the full leaf
+  annotation rather than coerced for `int`, `float` and `bool` only, and
+  unreadable text is `CoercionError` rather than a validation failure.
+- A value that arrives typed (a file, a `base` or overlay mapping, a
+  `(key, value)` pair, `Settings.load(**values)`, a typed CLI argument, a
+  resolver result) is checked against the leaf annotation when it is
+  written, so a wrong-typed leaf is `CoercionError` with the leaf's path
+  and the layer that set it (`bool` never satisfies `int`, `int`
+  satisfies `float`, a `Literal` or `Enum` needs a member of the same
+  type, a `Path`, `datetime`, `date`, `time`, `UUID`, `Decimal` or
+  `bytes` leaf takes its JSON text form). Every element of a
+  `tuple[Model, ...]` or `tuple[Union, ...]` list is checked, so a
+  non-mapping element is refused as `items[0]`. The resolved tree is
+  validated through `model_validate_json`, so `Path` and `datetime`
+  leaves compose from every layer. `None` at an optional list slot
+  (`tuple[int, ...] | None`) is accepted from every layer, typed or
+  textual, and refused at a required one as `ConfigError`.
+- Text holding a `${...}` expression is kept as it is from a textual
+  layer whatever the leaf annotation, and an expression may sit at a
+  leaf, a list, a map or a model slot in any layer; the resolved value is
+  checked against the schema, and text a resolver produced at a
+  non-`str` leaf is decoded by the annotation, so
+  `trainer.epochs=${oc.env:EPOCHS}`, `LOFI_T__N='${seed}'` and
+  `tags: ${oc.dict.keys:paths}` compose. A union slot still needs a
+  literal tag at merge time. A textual `null`, `~` or empty value clears
+  an optional model, union or map slot.
+- The schema's default map is the lowest layer of a `dict[str, T]` slot:
+  a default entry survives a layer that adds another key, and a layer's
+  entry composes over the default entry of the same key, through a
+  default union entry's tag included.
+- A computed or derived field name is accepted and dropped from document
+  layers only (a file, a mapping, a profile, an overlay, a file source);
+  in an override, a `Settings.load(**values)` keyword or a textual source
+  it is refused as `UnknownKeyError` saying the field is computed.
+- A typed discriminator must match a variant's literal by type as well
+  as value (`True` does not select `Literal[1]`, `1` does not select
+  `Literal[True]`); `UnknownVariantError.registered` and
+  `UnknownKeyError.declared_by` carry the live tag values rather than
+  their text, messages render them with `repr` (`Stage registers:
+  [1, 2]`), and a variant registered under several literals is named
+  once, by its first. A discriminator given under an alias the variants
+  declare selects the variant. Before any tag is known, a root-declared
+  field a variant shadows with another annotation or optionality is
+  refused until the tag is set. An empty union node names the layer
+  that created it in the `selects no variant` message.
+- For code moving from `bead.config.compose`: `ComposeValue` is
+  `ConfigValue`; `compose(profile_dict=...)` is `compose(base=...)` and
+  `compose(extra=[...])` is `compose(overlays=[...])`; the primary
+  file's `defaults:` entries and profiles are resolved against a search
+  path rather than the file's directory alone. Scalar maps
+  (`dict[str, str]`) merge key by key instead of being overwritten
+  wholesale, and `dict[str, Model]` entries descend into their models
+  and variants. Overrides and `base` documents are strict-checked at
+  merge time, so an undeclared key is `ConfigError` with its dotted path
+  rather than a validation error or nothing. Override values are read by
+  the leaf annotation, falling back to a standard-library scalar grammar
+  rather than YAML: `items=[a, b]` with bare words no longer parses
+  (write `items='["a", "b"]'` or `items=a,b` under `tuple[str, ...]`),
+  and `yes` and `no` are strings under `str`. Fields of a
+  tagged-union variant, the discriminator included, are settable from
+  every layer. `oc.select`, `oc.dict.keys`, `oc.dict.values`,
+  `oc.deprecated` and `oc.create` are implemented in full (bead's
+  raised or passed through); `oc.decode` keeps its base64 reading.
+  Resolver arguments are split on commas outside brackets, braces and
+  quotes, so `${oc.decode:[1, 2]}` passes one argument. A reference
+  cycle through a resolver that reads the tree with `lookup` is reported
+  as a cycle instead of overflowing the stack.
+
+### Removed
+
+- The empty `toml` extra of `didactic-settings`; TOML is read through
+  `tomllib` and needs no extra.
+- The string-valued `Settings.__provenance__` and the private
+  `_Source.fetch` protocol.
+
 ## [0.16.0] - 2026-09-14
 
 ### Changed

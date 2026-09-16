@@ -1,57 +1,93 @@
 # Settings
 
 The `didactic-settings` distribution. See
-[Guides > Settings](../guide/settings.md) for the per-source
-documentation and usage patterns.
+[Guides > Settings](../guide/settings.md) for the composition ladder,
+config groups, union descent, interpolation and provenance.
 
-```python
-from didactic.settings import (
-    Settings,
-    EnvSource,
-    DotEnvSource,
-    FileSource,
-    CliSource,
-)
+## Composition
 
+::: didactic.settings.compose
 
-class App(Settings):
-    debug: bool = False
-    port: int = 8080
+::: didactic.settings.compose_traced
 
-    __sources__ = (
-        FileSource(path="config.toml"),
-        EnvSource(prefix="APP_"),
-    )
+::: didactic.settings.compose_layers
 
+::: didactic.settings.Composed
 
-cfg = App.load()
-cfg.port                       # the resolved value
-cfg.__provenance__["port"]     # 'env' / 'file' / 'default' / 'override'
-```
+::: didactic.settings.Layer
 
-## Sources
+::: didactic.settings.strict_merge
 
-| source | reads from |
-| --- | --- |
-| `EnvSource(prefix=, name="env")` | environment variables |
-| `DotEnvSource(path=, prefix=, name="dotenv")` | dotenv file |
-| `FileSource(path=, name="file")` | JSON / TOML / YAML by suffix |
-| `CliSource(args=, name="cli")` | argparse `Namespace` or dict |
+## Class-based settings
 
-Each source has a `name` keyword used in provenance reporting.
+::: didactic.settings.Settings
 
-## `Settings.load`
+::: didactic.settings.Source
 
-`Settings.load(**overrides)` walks the declared `__sources__`
-in order, then applies any `**overrides`. The result is a
-`Settings` instance with `__provenance__` populated.
+::: didactic.settings.EnvSource
 
-The final precedence (lowest to highest) is:
+::: didactic.settings.DotEnvSource
 
-1. The declared default on the field.
-2. Sources, in the order declared in `__sources__`.
-3. Keyword overrides passed to `load(...)`.
+::: didactic.settings.FileSource
 
-A field that falls through to its declared default has provenance
-`"default"`. A field set by a keyword override has provenance
-`"override"`.
+::: didactic.settings.CliSource
+
+## Provenance
+
+::: didactic.settings.Provenance
+
+::: didactic.settings.Origin
+
+::: didactic.settings.OriginKind
+
+::: didactic.settings.provenance_of
+
+## Interpolation
+
+::: didactic.settings.resolve
+
+::: didactic.settings.resolve_traced
+
+::: didactic.settings.register_resolver
+
+::: didactic.settings.unregister_resolver
+
+::: didactic.settings.list_resolvers
+
+::: didactic.settings.lookup
+
+::: didactic.settings.active_root
+
+::: didactic.settings.ResolverFn
+
+## Documents, overrides and scalars
+
+::: didactic.settings.load_document
+
+::: didactic.settings.nest_override
+
+::: didactic.settings.parse_override
+
+::: didactic.settings.parse_scalar
+
+::: didactic.settings.decode_text
+
+::: didactic.settings.ConfigValue
+
+::: didactic.settings.KeyPath
+
+## Errors
+
+::: didactic.settings.ConfigError
+
+::: didactic.settings.UnknownKeyError
+
+::: didactic.settings.UnknownVariantError
+
+::: didactic.settings.MissingFragmentError
+
+::: didactic.settings.OverrideSyntaxError
+
+::: didactic.settings.CoercionError
+
+::: didactic.settings.InterpolationError

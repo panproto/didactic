@@ -1,214 +1,37 @@
-# ``CliSource`` accepts either an ``argparse.Namespace`` or a Mapping,
-# but pyright's ``Namespace`` stub ascribes a list-of-bytes shape to
-# ``vars(ns)`` items and rejects the dict comprehension. ``ModelConfig``
-# kwargs are constructed from a heterogeneous JSON dict and pyright
-# can't narrow each kwarg-value to its own ``Literal`` parameter
-# without per-key conditionals. Both are noise; tracked in
-# panproto/didactic#1.
-"""Settings sources and the ``Settings`` base class.
+"""The ``Settings`` base class: a model loaded through the composition engine.
 
 A ``Settings`` subclass declares fields like a regular
 [didactic.api.Model][didactic.api.Model], plus a class-level
-``__sources__`` tuple of sources to consult. ``Settings.load()``
-walks the sources in order, collecting per-field overrides; later
-sources win, and each field's resolved value records its provenance.
-
-See Also
---------
-didactic.Model : the base from which Settings inherits all field machinery.
+``__sources__`` tuple of sources to consult and an optional
+``__search_path__`` of directories holding fragments and profiles.
+``Settings.load()`` composes the primary file, its config groups, a
+profile, overlays, the sources and the overrides in that precedence, and
+attaches per-leaf provenance to the instance it returns.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import os
-from dataclasses import dataclass
+import annotationlib
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Self, cast
+from typing import TYPE_CHECKING, ClassVar, Final, Self
 
 import didactic.api as dx
+from didactic.settings._compose import assemble_layers, compose_layers
+from didactic.settings._sources import FileSource, Source
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from didactic.fields._fields import FieldSpec
-    from didactic.types._typing import FieldValue, JsonObject, JsonValue, Opaque
+    from didactic.settings._compose import Composed
+    from didactic.settings._groups import Override
+    from didactic.settings._interpolation import ResolverFn
+    from didactic.settings._provenance import Layer, Provenance
+    from didactic.settings._values import ConfigValue
 
-
-@dataclass(frozen=True, slots=True)
-class _Source:
-    """Base class marker for settings sources."""
-
-    name: str
-
-    def fetch(self, fields: Sequence[str]) -> JsonObject:
-        """Return ``{field: value}`` for each field this source supplies.
-
-        Subclasses override; the base raises to flag a misconfigured source.
-        """
-        msg = f"{type(self).__name__} does not implement fetch()"
-        raise NotImplementedError(msg)
-
-
-@dataclass(frozen=True, slots=True)
-class EnvSource(_Source):
-    """Read settings from environment variables.
-
-    Parameters
-    ----------
-    prefix
-        Prefix applied to each field name to compute the env var.
-        ``EnvSource(prefix="APP_")`` reads ``port`` from ``APP_PORT``.
-    name
-        Optional source name for provenance reporting.
-    """
-
-    prefix: str = ""
-    name: str = "env"
-
-    def fetch(self, fields: Sequence[str]) -> JsonObject:
-        """Return ``{field: env_value}`` for fields whose env var is set."""
-        out: JsonObject = {}
-        for fname in fields:
-            key = f"{self.prefix}{fname}".upper()
-            if key in os.environ:
-                out[fname] = os.environ[key]
-        return out
-
-
-@dataclass(frozen=True, slots=True)
-class DotEnvSource(_Source):
-    """Read settings from a ``.env`` file.
-
-    Parameters
-    ----------
-    path
-        Path to the dotenv file.
-    prefix
-        Prefix applied to each field name.
-    name
-        Optional source name for provenance reporting.
-    """
-
-    path: str = ".env"
-    prefix: str = ""
-    name: str = "dotenv"
-
-    def fetch(self, fields: Sequence[str]) -> JsonObject:
-        """Return ``{field: value}`` from the file."""
-        path = Path(self.path)
-        if not path.exists():
-            return {}
-        env: dict[str, str] = {}
-        for raw_line in path.read_text().splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            env[k.strip()] = v.strip().strip("'\"")
-        out: JsonObject = {}
-        for fname in fields:
-            key = f"{self.prefix}{fname}".upper()
-            if key in env:
-                out[fname] = env[key]
-        return out
-
-
-@dataclass(frozen=True, slots=True)
-class FileSource(_Source):
-    """Read settings from a structured config file (JSON / TOML / YAML).
-
-    Parameters
-    ----------
-    path
-        Path to the file. Format detected by suffix.
-    name
-        Optional source name for provenance reporting.
-    """
-
-    path: str = "config.toml"
-    name: str = "file"
-
-    def fetch(self, fields: Sequence[str]) -> JsonObject:
-        """Return ``{field: value}`` from the file."""
-        path = Path(self.path)
-        if not path.exists():
-            return {}
-        text = path.read_text()
-        suffix = path.suffix.lower()
-        if suffix == ".json":
-            data = json.loads(text)
-        elif suffix == ".toml":
-            import tomllib  # noqa: PLC0415
-
-            data = tomllib.loads(text)
-        elif suffix in (".yaml", ".yml"):
-            import importlib  # noqa: PLC0415
-
-            try:
-                yaml_mod = importlib.import_module("yaml")
-            except ImportError as exc:  # pragma: no cover
-                msg = (
-                    "FileSource cannot load YAML files without the optional "
-                    "`yaml` extra; install didactic-settings[yaml]"
-                )
-                raise ImportError(msg) from exc
-            data = cast("Opaque", yaml_mod.safe_load(text))
-        else:
-            msg = f"unsupported FileSource suffix: {suffix!r}"
-            raise ValueError(msg)
-        if not isinstance(data, dict):
-            kind = type(data).__name__
-            msg = f"FileSource expects a top-level mapping; got {kind}"
-            raise TypeError(msg)
-        # Each loader (``json.loads``, ``tomllib.loads``, ``yaml.safe_load``)
-        # returns an opaque mapping at the type level; the values are
-        # ``JsonValue``-shaped at runtime and forwarded as such.
-        raw_dict = cast("dict[Opaque, Opaque]", data)
-        typed_data: dict[str, JsonValue] = {
-            str(k): cast("JsonValue", v) for k, v in raw_dict.items()
-        }
-        return {k: v for k, v in typed_data.items() if k in fields}
-
-
-@dataclass(frozen=True, slots=True)
-class CliSource(_Source):
-    """Read settings from a parsed argparse ``Namespace`` (or dict).
-
-    Parameters
-    ----------
-    args
-        A mapping (or argparse.Namespace) supplying field values.
-    name
-        Optional source name for provenance reporting.
-    """
-
-    # ``argparse.Namespace`` and ``Mapping``s are both accepted at
-    # runtime: ``fetch`` calls ``vars(self.args)`` for objects with
-    # ``__dict__`` and ``dict(self.args)`` otherwise. The static type
-    # is widened accordingly.
-    args: argparse.Namespace | Mapping[str, FieldValue] | None = None
-    name: str = "cli"
-
-    def fetch(self, fields: Sequence[str]) -> JsonObject:
-        """Return ``{field: value}`` from the args mapping."""
-        if self.args is None:
-            return {}
-        # ``argparse.Namespace`` exposes its values via ``vars`` (``__dict__``);
-        # plain mappings go through ``dict``. Either path lands at a
-        # ``dict[str, object]`` view with JSON-shaped values.
-        if isinstance(self.args, argparse.Namespace):
-            raw_items: dict[str, Opaque] = vars(self.args)
-        else:
-            raw_items = {str(k): v for k, v in self.args.items()}
-        return {
-            k: cast("JsonValue", v)
-            for k, v in raw_items.items()
-            if k in fields and v is not None
-        }
+RESERVED_FIELD_NAMES: Final = frozenset(
+    {"path", "profile", "groups", "overlays", "overrides", "search_path", "resolvers"}
+)
+"""Field names a ``Settings`` subclass may not declare: ``load``'s keywords."""
 
 
 class Settings(dx.Model):
@@ -216,8 +39,9 @@ class Settings(dx.Model):
 
     Subclasses declare fields like any [didactic.api.Model][didactic.api.Model],
     plus a class-level ``__sources__`` tuple. Call
-    [Settings.load][didactic.settings.Settings.load] to populate from
-    the configured sources.
+    [Settings.load][didactic.settings.Settings.load] to compose an
+    instance from a primary file, its config groups, a profile, overlays,
+    the sources and overrides.
 
     Examples
     --------
@@ -232,96 +56,168 @@ class Settings(dx.Model):
 
     Attributes
     ----------
+    __sources__
+        The sources consulted in declaration order; later sources win.
+        Their names must be distinct.
+    __search_path__
+        Directories searched for fragments and profiles, after the
+        primary file's parent and the first ``FileSource``'s parent.
     __provenance__
-        Per-instance dict mapping each field name to the name of the
-        source that supplied its value. Fields that fell through to
-        the declared default get ``"default"``.
+        The [Provenance][didactic.settings.Provenance] of an instance
+        built by ``load``: one origin per leaf.
+
+    Raises
+    ------
+    TypeError
+        At class creation, when a field is named after one of ``load``'s
+        keywords or two sources share a name.
     """
 
-    __sources__: ClassVar[tuple[_Source, ...]] = ()
+    __sources__: ClassVar[tuple[Source, ...]] = ()
+    __search_path__: ClassVar[tuple[str, ...]] = ()
 
-    # Per-instance attribute set by ``load`` via ``object.__setattr__``;
-    # declared here at runtime (not as an annotation) so the
-    # ``dataclass_transform`` metaclass does not see it as a Model field.
+    # ``load`` attaches the record with ``object.__setattr__``; the
+    # declaration is type-only so the metaclass does not see a field.
     if TYPE_CHECKING:
 
         @property
-        def __provenance__(self) -> dict[str, str]:
-            """Per-instance source map; populated by ``load``."""
+        def __provenance__(self) -> Provenance:
+            """The per-leaf record; populated by ``load``."""
             ...
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Refuse reserved field names and duplicate source names."""
+        super().__init_subclass__(**kwargs)
+        for name in sorted(_declared_field_names(cls) & RESERVED_FIELD_NAMES):
+            msg = (
+                f"{cls.__name__} declares a field named {name!r}, which is a "
+                "keyword of Settings.load(); rename the field and give it "
+                f"alias={name!r} to keep the key in documents"
+            )
+            raise TypeError(msg)
+        seen: set[str] = set()
+        for source in cls.__sources__:
+            if source.name in seen:
+                msg = (
+                    "Settings sources must have distinct names; "
+                    f"{source.name!r} is used twice"
+                )
+                raise TypeError(msg)
+            seen.add(source.name)
+
     @classmethod
-    def load(cls, **overrides: FieldValue) -> Self:
-        """Construct a Settings instance by merging every source.
+    def load(
+        cls,
+        path: Path | str | None = None,
+        *,
+        profile: str | Mapping[str, ConfigValue] | None = None,
+        groups: Mapping[str, str | None] | None = None,
+        overlays: Sequence[Path | str | Mapping[str, ConfigValue]] = (),
+        overrides: Sequence[Override] = (),
+        search_path: Sequence[Path | str] | None = None,
+        resolvers: Mapping[str, ResolverFn] | None = None,
+        **values: ConfigValue,
+    ) -> Self:
+        """Compose an instance from the file, groups, profile, sources and overrides.
 
         Parameters
         ----------
-        **overrides
-            Per-field overrides that take final precedence over every
-            registered source.
+        path
+            The primary document; its ``defaults:`` list is honoured and
+            its parent is the first search root.
+        profile
+            A profile name or mapping.
+        groups
+            Config-group selections by slot.
+        overlays
+            File paths or mappings merged above the profile.
+        overrides
+            ``key=value`` strings or ``(key, value)`` pairs, applied above
+            the sources.
+        search_path
+            Directories searched for fragments and profiles;
+            ``__search_path__`` when omitted.
+        resolvers
+            Interpolation resolvers for this call.
+        **values
+            Typed overrides applied last, keyed by dotted path with ``__``
+            as the separator: ``model__type_encoder__num_heads=8``.
 
         Returns
         -------
         Settings
-            The validated Settings instance, with ``__provenance__``
-            populated.
+            The validated instance with ``__provenance__`` attached.
         """
-        field_names = tuple(cls.__field_specs__)
-        merged: dict[str, FieldValue] = {}
-        provenance: dict[str, str] = {}
+        return cls.load_traced(
+            path,
+            profile=profile,
+            groups=groups,
+            overlays=overlays,
+            overrides=overrides,
+            search_path=search_path,
+            resolvers=resolvers,
+            **values,
+        ).value
 
+    @classmethod
+    def load_traced(
+        cls,
+        path: Path | str | None = None,
+        *,
+        profile: str | Mapping[str, ConfigValue] | None = None,
+        groups: Mapping[str, str | None] | None = None,
+        overlays: Sequence[Path | str | Mapping[str, ConfigValue]] = (),
+        overrides: Sequence[Override] = (),
+        search_path: Sequence[Path | str] | None = None,
+        resolvers: Mapping[str, ResolverFn] | None = None,
+        **values: ConfigValue,
+    ) -> Composed[Self]:
+        """Load like :meth:`load` and return the value with its record and layers.
+
+        Parameters are those of :meth:`load`.
+        """
+        sources: list[Layer] = []
         for source in cls.__sources__:
-            chunk = source.fetch(field_names)
-            for k, v in chunk.items():
-                merged[k] = _coerce_value(v, cls.__field_specs__[k])
-                provenance[k] = source.name
+            layer = source.layer(cls)
+            if layer is not None:
+                sources.append(layer)
+        roots: list[Path | str] = []
+        for source in cls.__sources__:
+            if isinstance(source, FileSource):
+                roots.append(Path(source.path).parent)
+                break
+        roots.extend(cls.__search_path__ if search_path is None else search_path)
+        typed: list[Override] = [
+            (key.replace("__", "."), value) for key, value in values.items()
+        ]
+        layers = assemble_layers(
+            path,
+            groups=groups,
+            profile=profile,
+            overlays=overlays,
+            overrides=[*overrides, *typed],
+            search_path=roots,
+            sources=sources,
+        )
+        return compose_layers(schema=cls, layers=layers, resolvers=resolvers)
 
-        for k, v in overrides.items():
-            merged[k] = v
-            provenance[k] = "override"
 
-        # mark fields that fell through to the declared default
-        for fname in field_names:
-            provenance.setdefault(fname, "default")
+def _declared_field_names(cls: type) -> set[str]:
+    """Field names a class declares or inherits, read before the metaclass runs.
 
-        instance = cls(**merged)
-        # bypass the frozen-by-design guard to attach provenance metadata
-        object.__setattr__(instance, "__provenance__", provenance)
-        return instance
-
-
-def _coerce_value(raw: JsonValue, spec: FieldSpec) -> FieldValue:
-    """Coerce string values from env / dotenv / cli into the spec's type.
-
-    Notes
-    -----
-    Environment variables and dotenv lines arrive as strings even when
-    the target field type is ``int`` / ``bool`` / ``float``. This
-    helper does the obvious coercions; richer parsing (JSON-shaped
-    values, comma-separated tuples, etc.) is the field-converter's
-    responsibility.
+    ``__init_subclass__`` runs before ``__field_specs__`` is assigned, so
+    the class's own names come from its annotations and inherited names
+    from the bases' already-built field tables.
     """
-    if isinstance(raw, str):
-        annotation = spec.annotation
-        if annotation is bool:
-            lowered = raw.strip().lower()
-            return lowered in {"1", "true", "yes", "on"}
-        if annotation is int:
-            return int(raw)
-        if annotation is float:
-            return float(raw)
-    # Non-string ``JsonValue`` payloads (booleans, numbers, nested
-    # mappings / lists from JSON / TOML / YAML) are forwarded as-is. The
-    # ``FieldValue`` union and the ``JsonValue`` union overlap on every
-    # primitive shape and on nested dicts; ``list[...]`` arms are
-    # converted to tuples downstream by the field translation.
-    return cast("FieldValue", raw)
+    names: set[str] = set()
+    annotations = annotationlib.get_annotations(
+        cls, format=annotationlib.Format.FORWARDREF
+    )
+    names.update(name for name in annotations if not name.startswith("_"))
+    for base in cls.__bases__:
+        if issubclass(base, dx.Model):
+            names.update(base.__field_specs__)
+    return names
 
 
-__all__ = [
-    "CliSource",
-    "DotEnvSource",
-    "EnvSource",
-    "FileSource",
-    "Settings",
-]
+__all__ = ["RESERVED_FIELD_NAMES", "Settings"]

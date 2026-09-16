@@ -1,4 +1,4 @@
-"""Tests for didactic-settings."""
+"""The flat ``Settings`` contract: one source per top-level field."""
 
 from __future__ import annotations
 
@@ -30,8 +30,8 @@ def test_env_source_reads_prefixed_vars(monkeypatch: pytest.MonkeyPatch) -> None
     s = App.load()
     assert s.port == 9090
     assert s.debug is True
-    assert s.__provenance__["port"] == "env"
-    assert s.__provenance__["debug"] == "env"
+    assert s.__provenance__["port"].label == "source:env"
+    assert s.__provenance__["debug"].label == "source:env"
 
 
 def test_env_source_falls_through_to_default(
@@ -45,7 +45,7 @@ def test_env_source_falls_through_to_default(
 
     s = App.load()
     assert s.port == 8080
-    assert s.__provenance__["port"] == "default"
+    assert s.__provenance__["port"].label == "default"
 
 
 # -- dotenv source ----------------------------------------------------
@@ -63,7 +63,7 @@ def test_dotenv_source_reads_file(tmp_path: Path) -> None:
     s = App.load()
     assert s.port == 7070
     assert s.debug is True
-    assert s.__provenance__["port"] == "dotenv"
+    assert s.__provenance__["port"].label == "source:dotenv"
 
 
 # -- file source ------------------------------------------------------
@@ -103,7 +103,7 @@ def test_file_source_missing_file_is_no_op(tmp_path: Path) -> None:
 
     s = App.load()
     assert s.port == 8080
-    assert s.__provenance__["port"] == "default"
+    assert s.__provenance__["port"].label == "default"
 
 
 # -- cli source -------------------------------------------------------
@@ -121,7 +121,7 @@ def test_cli_source_reads_namespace() -> None:
 
     s = App.load()
     assert s.port == 4040
-    assert s.__provenance__["port"] == "cli"
+    assert s.__provenance__["port"].label == "source:cli"
 
 
 def test_cli_source_reads_dict() -> None:
@@ -162,7 +162,7 @@ def test_later_source_overrides_earlier(
 
     s = App.load()
     assert s.port == 2222  # file wins; declared after env
-    assert s.__provenance__["port"] == "file"
+    assert s.__provenance__["port"].label == "source:file"
 
 
 def test_load_kwargs_have_final_precedence(
@@ -176,4 +176,4 @@ def test_load_kwargs_have_final_precedence(
 
     s = App.load(port=9999)
     assert s.port == 9999
-    assert s.__provenance__["port"] == "override"
+    assert s.__provenance__["port"].label == "override:port=9999"

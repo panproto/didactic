@@ -207,6 +207,9 @@ class Model(metaclass=ModelMeta):
                     )
                 )
                 continue
+            except ValidationError as nested:
+                errors.extend(_relocated(fname, nested))
+                continue
             except (TypeError, ValueError) as exc:
                 errors.append(
                     ValidationErrorEntry(
@@ -404,6 +407,8 @@ class Model(metaclass=ModelMeta):
                         loc=(k,), type="validator_error", msg=fail.message
                     )
                 )
+            except ValidationError as nested:
+                errors.extend(_relocated(k, nested))
             except (TypeError, ValueError) as exc:
                 errors.append(
                     ValidationErrorEntry(loc=(k,), type="type_error", msg=str(exc))
@@ -1181,6 +1186,8 @@ def _from_json_payload(
             continue
         try:
             out[fname] = spec.translation.from_json(raw)
+        except ValidationError as nested:
+            errors.extend(_relocated(fname, nested))
         except (TypeError, ValueError) as exc:
             errors.append(
                 ValidationErrorEntry(loc=(fname,), type="type_error", msg=str(exc))
@@ -1188,6 +1195,28 @@ def _from_json_payload(
     if errors:
         raise ValidationError(entries=tuple(errors), model=cls)
     return out
+
+
+def _relocated(fname: str, nested: ValidationError) -> tuple[ValidationErrorEntry, ...]:
+    """Re-locate a nested model's failures under the field that holds it.
+
+    A field whose type is a Model, a tagged union, or a container of
+    either validates its value by constructing the inner instance; the
+    inner class raises its own ``ValidationError``. Each of its entries is
+    returned with ``loc`` prefixed by the field name and every other
+    attribute kept, so the outer model reports ``("trainer", "mode")``
+    under its own class and keeps collecting its sibling fields' errors.
+    """
+    return tuple(
+        ValidationErrorEntry(
+            loc=(fname, *entry.loc),
+            type=entry.type,
+            msg=entry.msg,
+            axiom=entry.axiom,
+            vertex_id=entry.vertex_id,
+        )
+        for entry in nested.entries
+    )
 
 
 @dataclass(frozen=True, slots=True)

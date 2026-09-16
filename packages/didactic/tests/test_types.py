@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated, Literal, cast
@@ -228,6 +230,13 @@ def test_unwrap_plain_type() -> None:
     base, meta = unwrap_annotated(int)
     assert base is int
     assert meta == ()
+
+
+def test_unwrap_annotated_is_exported_publicly() -> None:
+    import didactic.types
+
+    assert didactic.types.unwrap_annotated is unwrap_annotated
+    assert "unwrap_annotated" in didactic.types.__all__
 
 
 # -- nested -----------------------------------------------------------------
@@ -664,3 +673,65 @@ def test_panproto_accepts_alias_theory_spec() -> None:
     theory = panproto.create_theory(cast("Mapping[str, JsonValue]", spec))
     sort_names = {cast("str", record["name"]) for record in theory.sorts}
     assert "_Component" in sort_names
+
+
+# -- scalar mismatches are type errors ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("form", "value", "sort"),
+    [
+        (str, 5, "str"),
+        (int, "5", "int"),
+        (int, 2.0, "int"),
+        (int, True, "int"),
+        (float, "1.5", "float"),
+        (float, False, "float"),
+        (bool, 1, "bool"),
+        (bytes, "ff", "bytes"),
+        (Decimal, 1.5, "Decimal"),
+        (datetime, "2026-01-01T00:00:00", "datetime"),
+        (date, "2026-01-01", "date"),
+        (UUID, "0" * 32, "UUID"),
+    ],
+)
+def test_scalar_encoder_refuses_a_wrong_typed_value_with_type_error(
+    form: TypeForm, value: FieldValue, sort: str
+) -> None:
+    with pytest.raises(TypeError, match=f"expected {sort}, got {type(value).__name__}"):
+        classify(form).encode(value)
+
+
+def test_scalar_encoder_refusal_survives_python_optimised_mode() -> None:
+    # ``python -O`` strips assert statements; the guard is a plain raise
+    script = (
+        "from didactic.types._types import classify\n"
+        "try:\n"
+        "    classify(int).encode('5')\n"
+        "except TypeError as exc:\n"
+        "    print(exc)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "expected int, got str"
+
+
+@pytest.mark.parametrize(
+    ("form", "value"),
+    [
+        (bytes, 5),
+        (Decimal, True),
+        (datetime, 5),
+        (date, 5),
+        (UUID, 5),
+    ],
+)
+def test_from_json_refuses_a_wrong_shaped_payload_with_type_error(
+    form: TypeForm, value: JsonValue
+) -> None:
+    with pytest.raises(TypeError, match="expected"):
+        classify(form).from_json(value)

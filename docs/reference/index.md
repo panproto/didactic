@@ -54,7 +54,8 @@ parameter list.
 
 - [Pydantic adapter](pydantic-adapter.md): `from_pydantic`,
   `to_pydantic`.
-- [Settings](settings.md): `Settings`, `EnvSource`, `DotEnvSource`,
-  `FileSource`, `CliSource`.
+- [Settings](settings.md): `compose`, `compose_traced`, `Settings`,
+  the sources, `Provenance`, `Origin`, the resolver registry and the
+  error hierarchy.
 - [FastAPI](fastapi.md): `as_request`, `as_response`,
   `register_validation_handler`.

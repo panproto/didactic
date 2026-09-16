@@ -33,7 +33,11 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py314"
-src = ["packages/didactic/src", "packages/didactic-pydantic/src"]
+src = [
+    "packages/didactic/src",
+    "packages/didactic-pydantic/src",
+    "packages/didactic-settings/src",
+]
 
 [tool.ruff.lint]
 # extend the defaults with strict docstring/style/typing checks
@@ -104,7 +108,7 @@ extend-ignore-names = ["A", "B", "T", "P"]
 # flattening into helpers obscures the table of cases.
 "**/models/_model.py" = ["PLR0911", "PLR0912", "PLR0915"]
 # tests aren't third-party-import-restricted
-"packages/didactic-settings/tests/*.py" = ["TC001", "TC002", "TC003"]
+"packages/didactic-settings/tests/**/*.py" = ["TC001", "TC002", "TC003"]
 # fastapi handler does runtime-only imports inside the function body
 "packages/didactic-fastapi/src/didactic/fastapi/_adapter.py" = ["TC001", "TC002"]
 # example scripts use brief Lens/Migration subclasses whose method
@@ -166,6 +170,13 @@ addopts = [
     "--strict-config",
     "--import-mode=importlib",
 ]
+# every distribution ships a ``tests`` package; naming test modules by
+# their rootdir-relative path (``packages.didactic-settings.tests``) keeps
+# the four packages apart, so a relative import inside one of them resolves
+# to its own helpers. The rootdir has to be importable for that naming to
+# apply, hence ``pythonpath``.
+consider_namespace_packages = true
+pythonpath = ["."]
 filterwarnings = [
     "error",
 ]
