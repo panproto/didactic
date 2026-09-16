@@ -154,6 +154,33 @@ def test_typed_values_that_fit_are_accepted() -> None:
     )
 
 
+def test_null_at_an_optional_list_slot_is_accepted() -> None:
+    class Wide(dx.Model, extra="forbid"):
+        order: tuple[int, ...] | None = (1,)
+        heads: tuple[HeadSpec, ...] | None = ()
+
+    wide = compose(schema=Wide, base={"order": None, "heads": None})
+    assert wide == Wide(order=None, heads=None)
+    wide = compose(schema=Wide, overrides=["order=null", "heads=~"])
+    assert wide == Wide(order=None, heads=None)
+    wide = compose(schema=Wide, overrides=[("order", None), ("heads", None)])
+    assert wide == Wide(order=None, heads=None)
+    traced = compose_traced(schema=Wide, base={"order": [2]}, overrides=["order="])
+    assert traced.value == Wide(order=None)
+    assert traced.provenance["order"].kind == "override"
+
+
+def test_null_at_a_required_list_slot_is_refused() -> None:
+    class Wide(dx.Model, extra="forbid"):
+        order: tuple[int, ...] = ()
+        heads: tuple[HeadSpec, ...] = ()
+
+    with pytest.raises(ConfigError, match=r"'order' expects a list .*got null"):
+        compose(schema=Wide, base={"order": None})
+    with pytest.raises(ConfigError, match=r"'heads' expects a list .*got null"):
+        compose(schema=Wide, overrides=[("heads", None)])
+
+
 def test_literal_and_tuple_element_mismatches() -> None:
     class Wide(dx.Model, extra="forbid"):
         mode: Literal["a", "b"] = "a"

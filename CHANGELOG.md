@@ -148,7 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tuple[Model, ...]` or `tuple[Union, ...]` list is checked, so a
   non-mapping element is refused as `items[0]`. The resolved tree is
   validated through `model_validate_json`, so `Path` and `datetime`
-  leaves compose from every layer.
+  leaves compose from every layer. `None` at an optional list slot
+  (`tuple[int, ...] | None`) is accepted from every layer, typed or
+  textual, and refused at a required one as `ConfigError`.
 - Text holding a `${...}` expression is kept as it is from a textual
   layer whatever the leaf annotation, and an expression may sit at a
   leaf, a list, a map or a model slot in any layer; the resolved value is

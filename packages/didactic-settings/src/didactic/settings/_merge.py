@@ -309,7 +309,11 @@ def _merge_leaf(
 def _merge_list(
     value: ConfigValue, *, target: ListOf, path: KeyPath, ctx: _Ctx
 ) -> ConfigValue:
-    """Write a list wholesale, checking its elements first."""
+    """Write a list wholesale, checking its elements first.
+
+    ``None`` (or null text under a textual layer) is accepted at an
+    optional list slot and refused elsewhere.
+    """
     if isinstance(value, str):
         if is_whole_expression(value):
             stamp(ctx.prov, path, value, ctx.origin)
@@ -318,6 +322,11 @@ def _merge_list(
             value = decode_text(
                 value, target.annotation, path=dotted(path), origin=ctx.origin
             )
+    if value is None:
+        if not target.optional:
+            raise _wrong_shape(target, path, ctx, "null")
+        stamp(ctx.prov, path, None, ctx.origin)
+        return None
     if isinstance(value, tuple):
         value = list(value)
     if not isinstance(value, list):
