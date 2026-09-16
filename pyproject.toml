@@ -104,7 +104,7 @@ extend-ignore-names = ["A", "B", "T", "P"]
 # flattening into helpers obscures the table of cases.
 "**/models/_model.py" = ["PLR0911", "PLR0912", "PLR0915"]
 # tests aren't third-party-import-restricted
-"packages/didactic-settings/tests/*.py" = ["TC001", "TC002", "TC003"]
+"packages/didactic-settings/tests/**/*.py" = ["TC001", "TC002", "TC003"]
 # fastapi handler does runtime-only imports inside the function body
 "packages/didactic-fastapi/src/didactic/fastapi/_adapter.py" = ["TC001", "TC002"]
 # example scripts use brief Lens/Migration subclasses whose method
