@@ -735,3 +735,35 @@ def test_from_json_refuses_a_wrong_shaped_payload_with_type_error(
 ) -> None:
     with pytest.raises(TypeError, match="expected"):
         classify(form).from_json(value)
+
+
+class _NullableToken(dx.Model):
+    """Module level so that pickle can find it by qualified name."""
+
+    text: str | None = None
+    count: int | None = None
+
+
+def test_optional_text_that_spells_null_is_a_present_value() -> None:
+    r"""``"null"`` is a string a user can write; only ``None`` is absent.
+
+    The ``T | None`` wire form spells ``None`` as the text ``null``, so a
+    present value with that exact encoding is escaped with a trailing
+    backslash and the escape is undone on read. The family ``null``,
+    ``null\``, ``null\\`` shifts by one; every other text is its own
+    wire form, so stored and pickled values keep their bytes.
+    """
+    import pickle
+
+    for value in ["null", "null\\", "null\\\\", "nullx", "Null", "", "x", None]:
+        token = _NullableToken(text=value)
+        assert token.text == value
+        assert _NullableToken.from_storage_dict(token.to_storage_dict()).text == value
+        assert pickle.loads(pickle.dumps(token)).text == value
+        assert _NullableToken.model_validate_json(token.model_dump_json()).text == value
+
+    assert _NullableToken(text="null").to_storage_dict()["text"] == "null\\"
+    assert _NullableToken(text=None).to_storage_dict()["text"] == "null"
+    assert _NullableToken(text="x").to_storage_dict()["text"] == "x"
+    assert _NullableToken(count=None).count is None
+    assert _NullableToken(count=7).count == 7

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-16
+
+### Fixed
+
+- A `str | None` field given the text `"null"` read back as `None`. The
+  optional wire form spells `None` as the text `null`, and a present
+  string with that exact encoding collided with it; lairs' `Token.text`
+  lost any token spelt `null`, which Hypothesis found in bead's layers
+  round-trip law. A present value whose encoding is `null` followed by
+  any run of backslashes now gains one backslash on the wire and loses it
+  on read, so `None` and every string stay distinct for any inner type.
+  No other value changes its stored or pickled form.
+
 ## [0.17.0] - 2026-09-16
 
 ### Added

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import enum
 import json
+import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -1983,6 +1984,36 @@ def _classify_literal(args: tuple[FieldValue, ...]) -> TypeTranslation:
 # ---------------------------------------------------------------------------
 
 
+_NONE_TEXT = "null"
+"""The wire text of ``None`` in a ``T | None`` field."""
+
+_NONE_TEXT_FAMILY = re.compile(r"^null\\*$")
+"""``"null"`` followed by any run of backslashes: the encodings that must
+be escaped so that a present value can never be read back as ``None``."""
+
+
+def _escape_none_text(encoded: Encoded) -> Encoded:
+    r"""Keep a present value's wire text distinct from ``None``'s.
+
+    A present value encodes as itself unless that text is ``"null"``
+    followed by zero or more backslashes, in which case one backslash is
+    appended. So ``"null"`` becomes ``"null\\"``, ``"null\\"`` becomes
+    ``"null\\\\"``, and every other text is unchanged. Together with
+    :func:`_unescape_none_text` this is a bijection between all texts and
+    all texts other than ``"null"``, which leaves ``"null"`` free to mean
+    ``None`` for any inner encoder. Nothing but that family changes its
+    wire form, so stored and pickled values round-trip as before.
+    """
+    return encoded + "\\" if _NONE_TEXT_FAMILY.match(encoded) else encoded
+
+
+def _unescape_none_text(encoded: Encoded) -> Encoded:
+    """Undo :func:`_escape_none_text` for a text that is not ``"null"``."""
+    if encoded != _NONE_TEXT and _NONE_TEXT_FAMILY.match(encoded):
+        return encoded[:-1]
+    return encoded
+
+
 def classify(typ: TypeForm) -> TypeTranslation:
     """Classify a Python type hint and return a TypeTranslation.
 
@@ -2058,10 +2089,10 @@ def classify(typ: TypeForm) -> TypeTranslation:
         inner = classify(inner_type)
 
         def enc(v: FieldValue) -> Encoded:
-            return "null" if v is None else inner.encode(v)
+            return _NONE_TEXT if v is None else _escape_none_text(inner.encode(v))
 
         def dec(s: Encoded) -> FieldValue:
-            return None if s == "null" else inner.decode(s)
+            return None if s == _NONE_TEXT else inner.decode(_unescape_none_text(s))
 
         def from_json(v: JsonValue) -> FieldValue:
             return None if v is None else inner.from_json(v)
