@@ -231,8 +231,11 @@ def test_reserved_load_keyword_as_a_field_name_is_refused_at_class_creation() ->
         # ``profile`` collides with ``load``'s keyword; the check reads the
         # class annotations, since ``__field_specs__`` is assigned after
         # ``__init_subclass__`` runs
-        class _Bad(Settings):
+        class Bad(Settings):
             profile: str = ""
+
+        # the class statement raises; the name is referenced for the checker
+        _ = Bad
 
     assert "profile" in str(info.value)
     assert "alias" in str(info.value)
@@ -255,12 +258,14 @@ def test_reserved_load_keyword_as_a_field_name_is_refused_at_class_creation() ->
 def test_duplicate_source_names_are_refused_at_class_creation(tmp_path: Path) -> None:
     with pytest.raises(TypeError) as info:
 
-        class _Bad(Settings):
+        class Bad(Settings):
             x: int = 0
             __sources__: ClassVar = (
                 FileSource(tmp_path / "a.toml"),
                 FileSource(tmp_path / "b.toml"),
             )
+
+        _ = Bad
 
     assert (
         str(info.value)

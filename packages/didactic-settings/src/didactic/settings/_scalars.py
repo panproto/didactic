@@ -101,6 +101,24 @@ def parse_override(expr: str) -> tuple[str, str]:
     if not key:
         msg = f"Override {expr!r} has an empty key; expected key=value"
         raise OverrideSyntaxError(msg)
+    validate_override_key(key)
+    return key, value
+
+
+def validate_override_key(key: str) -> None:
+    """Check a dotted override key.
+
+    Every segment must be non-empty and no segment may be an integer,
+    since lists are set whole rather than indexed into.
+
+    Raises
+    ------
+    OverrideSyntaxError
+        When the key is malformed.
+    """
+    if not key:
+        msg = "Override key is empty; expected a dotted path"
+        raise OverrideSyntaxError(msg)
     segments = key.split(".")
     for index, segment in enumerate(segments):
         if not segment:
@@ -113,7 +131,6 @@ def parse_override(expr: str) -> tuple[str, str]:
                 f"lists are set whole, as {head}=[...]"
             )
             raise OverrideSyntaxError(msg)
-    return key, value
 
 
 def decode_text(
@@ -304,4 +321,4 @@ def _render(typ: object) -> str:
     return repr(typ).replace("typing.", "")
 
 
-__all__ = ["decode_text", "parse_override", "parse_scalar"]
+__all__ = ["decode_text", "parse_override", "parse_scalar", "validate_override_key"]

@@ -29,6 +29,7 @@ from ._schemas import (
     MlpDecoder,
     RunSpec,
     TransformerEncoder,
+    subtree,
 )
 
 
@@ -224,7 +225,7 @@ def test_groups_argument_replaces_the_files_choice_in_place(conf: Path) -> None:
     )
     # the replaced fragment's keys never reach the tree
     assert "model.type_encoder.num_heads" not in run.provenance
-    assert run.tree["model"]["type_encoder"] == {"kind": "lstm"}
+    assert subtree(run.tree, "model", "type_encoder") == {"kind": "lstm"}
     # the table keeps its position: ``paths`` is still the first layer applied
     kinds = [layer.origin.label for layer in run.layers]
     assert kinds.index("defaults:paths") < kinds.index("group:model.type_encoder=lstm")
@@ -338,8 +339,14 @@ def test_fragment_carrying_defaults_is_refused_as_an_unknown_key(conf: Path) -> 
 
 
 def test_toml_and_json_fragments_are_supported(conf: Path) -> None:
+    # ``run.yaml`` sets ``trainer.out_dir`` in its body, which beats the
+    # fragment; a primary file that leaves the slot alone shows the fragment
+    cfg = _write(
+        conf / "fragments.yaml",
+        "defaults:\n  - model.combinator_decoders.fwd: linear\n",
+    )
     run = compose_traced(
-        conf / "run.yaml",
+        cfg,
         schema=RunSpec,
         groups={"model.combinator_decoders.fwd": "mlp", "trainer": "fast"},
     )
@@ -353,7 +360,10 @@ def test_toml_and_json_fragments_are_supported(conf: Path) -> None:
 
 def test_fragment_expressions_resolve_against_the_whole_tree(conf: Path) -> None:
     _write(conf / "trainer" / "data.yaml", "out_dir: ${paths.data_dir}/out\n")
-    run = compose_traced(conf / "run.yaml", schema=RunSpec, groups={"trainer": "data"})
+    # the fragment sits below the file body, so the primary file must not set
+    # ``trainer.out_dir`` itself; ``paths`` comes from the root fragment
+    cfg = _write(conf / "exprs.yaml", "defaults:\n  - paths\n")
+    run = compose_traced(cfg, schema=RunSpec, groups={"trainer": "data"})
     assert run.value.trainer.out_dir == "/data/ccg/out"
     origin = run.provenance["trainer.out_dir"]
     assert origin.label == "group:trainer=data"
@@ -473,7 +483,10 @@ def test_earliest_root_shadows_a_fragment_of_the_same_name(
         groups={"model.type_encoder": "gru"},
         search_path=[other, site],
     )
-    assert run2.tree["model"]["type_encoder"] == {"kind": "gru", "dropout": 0.1}
+    assert subtree(run2.tree, "model", "type_encoder") == {
+        "kind": "gru",
+        "dropout": 0.1,
+    }
 
 
 def test_group_directory_in_no_root_is_reported_with_the_roots_searched(

@@ -170,6 +170,13 @@ addopts = [
     "--strict-config",
     "--import-mode=importlib",
 ]
+# every distribution ships a ``tests`` package; naming test modules by
+# their rootdir-relative path (``packages.didactic-settings.tests``) keeps
+# the four packages apart, so a relative import inside one of them resolves
+# to its own helpers. The rootdir has to be importable for that naming to
+# apply, hence ``pythonpath``.
+consider_namespace_packages = true
+pythonpath = ["."]
 filterwarnings = [
     "error",
 ]

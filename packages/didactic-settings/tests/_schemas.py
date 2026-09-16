@@ -10,9 +10,21 @@ This module deliberately omits ``from __future__ import annotations``:
 discriminator annotation at class-creation time and refuses a string.
 """
 
+from collections.abc import Mapping
 from typing import Literal
 
 import didactic.api as dx
+from didactic.settings import ConfigValue
+
+
+def subtree(tree: Mapping[str, ConfigValue], *keys: str) -> dict[str, ConfigValue]:
+    """Index a nested document, asserting each step lands on a mapping."""
+    node: ConfigValue = tree
+    for key in keys:
+        assert isinstance(node, dict), f"{key!r}: expected a mapping, got {node!r}"
+        node = node[key]
+    assert isinstance(node, dict), f"expected a mapping at {keys}, got {node!r}"
+    return node
 
 
 class TypeEncoderSpec(dx.TaggedUnion, discriminator="kind", extra="forbid"):

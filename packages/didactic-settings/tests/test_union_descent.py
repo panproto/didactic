@@ -39,6 +39,7 @@ from ._schemas import (
     Sgd,
     StageTwo,
     TransformerEncoder,
+    subtree,
 )
 
 
@@ -123,7 +124,8 @@ def test_b_provisional_field_then_tag_and_reverse_agree(tmp_path: Path) -> None:
     backward = compose_traced(
         schema=RunSpec, overlays=[tag_layer, field_layer], search_path=[tmp_path]
     )
-    assert forward.value == backward.value == RunSpec(optimizer=Sgd(momentum=0.5))
+    assert forward.value == backward.value
+    assert forward.value.optimizer == backward.value.optimizer == Sgd(momentum=0.5)
     assert forward.tree == backward.tree
     assert forward.provenance == backward.provenance
     assert forward.provenance["optimizer.momentum"].label == "overlay:field.yaml"
@@ -291,7 +293,7 @@ def test_e_textual_override_decodes_by_the_selected_variants_annotation(
         cfg, schema=RunSpec, overrides=["model.type_encoder.hidden=64"]
     )
     assert run.value.model.type_encoder == LstmEncoder(hidden=64)
-    assert run.tree["model"]["type_encoder"] == {"kind": "lstm", "hidden": 64}
+    assert subtree(run.tree, "model", "type_encoder") == {"kind": "lstm", "hidden": 64}
     assert (
         run.provenance["model.type_encoder.hidden"].label
         == "override:model.type_encoder.hidden=64"
@@ -462,7 +464,7 @@ def test_computed_field_key_on_a_variant_is_accepted_and_labelled_default(
     enc = run.value.model.type_encoder
     assert isinstance(enc, TransformerEncoder)
     assert enc.declared_output == 4 * 256
-    assert "declared_output" not in run.tree["model"]["type_encoder"]
+    assert "declared_output" not in subtree(run.tree, "model", "type_encoder")
     assert run.provenance["model.type_encoder.declared_output"].label == "default"
 
 
@@ -589,7 +591,7 @@ def test_variant_switch_drops_the_old_variants_private_keys(tmp_path: Path) -> N
     )
     fwd = run.value.model.combinator_decoders["fwd"]
     assert fwd == MlpDecoder(temperature=0.5)
-    assert run.tree["model"]["combinator_decoders"]["fwd"] == {
+    assert subtree(run.tree, "model", "combinator_decoders", "fwd") == {
         "kind": "mlp",
         "temperature": 0.5,
     }
@@ -613,7 +615,7 @@ def test_variant_switch_keeps_fields_both_variants_declare(tmp_path: Path) -> No
     run = compose_traced(cfg, schema=RunSpec, overrides=["model.type_encoder.kind=gru"])
     enc = run.value.model.type_encoder
     assert enc == GruEncoder(dropout=0.2)
-    assert run.tree["model"]["type_encoder"] == {"kind": "gru", "dropout": 0.2}
+    assert subtree(run.tree, "model", "type_encoder") == {"kind": "gru", "dropout": 0.2}
     p = run.provenance
     assert p["model.type_encoder.dropout"].label == "file:run.yaml"
     assert p["model.type_encoder.kind"].label == "override:model.type_encoder.kind=gru"

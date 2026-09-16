@@ -98,7 +98,7 @@ def test_coverage_with_nulls_empty_maps_and_empty_tuples() -> None:
 
     class Holder(dx.Model, extra="forbid"):
         maybe: Inner | None = None
-        table: dict[str, str] = dx.field(default_factory=dict)
+        table: dict[str, str] = dx.field(default_factory=dict[str, str])
         items: tuple[int, ...] = ()
         inner: Inner = dx.field(default_factory=Inner)
 
@@ -270,8 +270,8 @@ def test_whole_node_interpolation_at_a_mapping_slot_is_refused(tmp_path: Path) -
     # a string at a model, union or map slot is refused before interpolation
     # runs, so ``section: ${other}`` never pastes a subtree into the tree
     class Holder(dx.Model, extra="forbid"):
-        a: dict[str, str] = dx.field(default_factory=dict)
-        b: dict[str, str] = dx.field(default_factory=dict)
+        a: dict[str, str] = dx.field(default_factory=dict[str, str])
+        b: dict[str, str] = dx.field(default_factory=dict[str, str])
 
     a = _write(tmp_path / "a.yaml", "a:\n  x: '1'\nb: ${a}\n")
     with pytest.raises(ConfigError) as info:
@@ -491,7 +491,7 @@ def test_unions_in_every_position_are_covered(tmp_path: Path) -> None:
         one: Root = dx.field(default_factory=V)
         maybe: Root | None = None
         many: tuple[Root, ...] = ()
-        table: dict[str, Root] = dx.field(default_factory=dict)
+        table: dict[str, Root] = dx.field(default_factory=dict[str, Root])
 
     run = compose_traced(
         schema=Holder,
@@ -513,7 +513,7 @@ def test_unions_in_every_position_are_covered(tmp_path: Path) -> None:
     assert run.provenance["table.k.shared"].label == "default"
     assert run.value.one == V()
     assert run.value.many == (V(),)
-    assert isinstance(run.value.model_dump()["table"]["k"], V)
+    assert isinstance(run.value.table["k"], V)
     # the other schema classes keep their defaults through the same machinery
     assert compose(schema=RunSpec).optimizer == Adam()
     assert compose(

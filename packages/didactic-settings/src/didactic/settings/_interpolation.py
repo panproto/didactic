@@ -541,9 +541,23 @@ def resolve(
 def resolve_traced(
     document: Mapping[str, ConfigValue],
     *,
+    root: Mapping[str, ConfigValue] | None = None,
     resolvers: Mapping[str, ResolverFn] | None = None,
 ) -> tuple[dict[str, ConfigValue], dict[KeyPath, str]]:
     """Resolve a whole document and report which leaves held expressions.
+
+    Parameters
+    ----------
+    document
+        The document whose leaves are resolved.
+    root
+        The tree references resolve against; ``document`` itself when
+        omitted. The composition engine passes the document backed by the
+        schema's defaults, so a reference to a field no layer set reads
+        the model's default.
+    resolvers
+        Resolvers consulted before the process-wide registry, for this
+        call only.
 
     Returns
     -------
@@ -556,11 +570,13 @@ def resolve_traced(
     expressions: dict[KeyPath, str] = {}
     for path, value in leaves(document):
         if isinstance(value, str):
-            if _mentions_expression(value):
+            if mentions_expression(value):
                 expressions[path] = value
-        elif isinstance(value, list) and _mentions_expression(value):
+        elif isinstance(value, list) and mentions_expression(value):
             expressions[path] = json.dumps(value)
-    state = _EvalState(root=document, resolvers=resolvers or {})
+    state = _EvalState(
+        root=document if root is None else root, resolvers=resolvers or {}
+    )
     with _activate(state):
         resolved = {
             key: _resolve_value(value, (key,), state) for key, value in document.items()
@@ -568,7 +584,7 @@ def resolve_traced(
     return resolved, expressions
 
 
-def _mentions_expression(value: ConfigValue) -> bool:
+def mentions_expression(value: ConfigValue) -> bool:
     """Whether a value holds an unescaped ``${...}`` anywhere inside it.
 
     Text the parser refuses counts as an expression, so the resolution
@@ -583,9 +599,9 @@ def _mentions_expression(value: ConfigValue) -> bool:
             return True
         return any(not isinstance(node, _Literal) for node in nodes)
     if isinstance(value, list):
-        return any(_mentions_expression(item) for item in value)
+        return any(mentions_expression(item) for item in value)
     if isinstance(value, Mapping):
-        return any(_mentions_expression(item) for item in value.values())
+        return any(mentions_expression(item) for item in value.values())
     return False
 
 
@@ -787,6 +803,7 @@ __all__ = [
     "active_root",
     "list_resolvers",
     "lookup",
+    "mentions_expression",
     "register_resolver",
     "resolve",
     "resolve_traced",
