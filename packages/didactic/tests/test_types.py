@@ -230,6 +230,13 @@ def test_unwrap_plain_type() -> None:
     assert meta == ()
 
 
+def test_unwrap_annotated_is_exported_publicly() -> None:
+    import didactic.types
+
+    assert didactic.types.unwrap_annotated is unwrap_annotated
+    assert "unwrap_annotated" in didactic.types.__all__
+
+
 # -- nested -----------------------------------------------------------------
 
 
