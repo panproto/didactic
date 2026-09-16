@@ -56,10 +56,12 @@ contribute submodules under `didactic.<name>`:
   converting between `pydantic.BaseModel` and `dx.Model` in either
   direction. Install it when you need to interoperate with
   Pydantic-shaped code. See [Guides > Pydantic interop](guide/pydantic.md).
-- `didactic-settings` provides a `Settings` base class that draws
-  values from environment variables, dotenv files, structured config
-  files, and CLI arguments, with each field's resolved value tagged
-  by the source it came from. See [Guides > Settings](guide/settings.md).
+- `didactic-settings` composes a validated model from layered
+  configuration: a primary file and the config-group fragments it
+  selects, profiles, overlays, environment variables, dotenv files,
+  CLI arguments and dotted overrides, with `${...}` interpolation,
+  descent into tagged-union variants, and a record of which layer wrote
+  each leaf. See [Guides > Settings](guide/settings.md).
 - `didactic-fastapi` provides `as_response`/`as_request` adapters
   and a 422 handler so `dx.Model` types can be used as FastAPI
   request and response bodies. See [Guides > FastAPI](guide/fastapi.md).

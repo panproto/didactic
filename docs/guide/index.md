@@ -59,8 +59,9 @@ specific question of the form "how do I do X with didactic".
 
 - [Pydantic interop](pydantic.md) covers
   `from_pydantic` and `to_pydantic` from `didactic-pydantic`.
-- [Settings](settings.md) covers `didactic-settings`: env vars,
-  dotenv, structured config files, and CLI args, with
-  per-field provenance.
+- [Settings](settings.md) covers `didactic-settings`: config files
+  and config groups, profiles, overlays, environment variables, dotenv,
+  CLI args and dotted overrides, union descent, interpolation, and
+  per-leaf provenance.
 - [FastAPI](fastapi.md) covers `didactic-fastapi` for using `dx.Model`
   types as request and response bodies.
