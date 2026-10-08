@@ -58,6 +58,8 @@ class _EvalState:
         The per-call resolver overlay, consulted before the registry.
     seen
         Reference paths currently being evaluated, for cycle detection.
+    references
+        The same paths in evaluation order, for reporting a complete cycle.
     stack
         Paths of the leaves whose text is being resolved, innermost last.
     """
@@ -65,6 +67,9 @@ class _EvalState:
     root: Mapping[str, ConfigValue]
     resolvers: Mapping[str, ResolverFn]
     seen: set[tuple[int | str, ...]] = field(default_factory=set[tuple[int | str, ...]])
+    references: list[tuple[int | str, ...]] = field(
+        default_factory=list[tuple[int | str, ...]]
+    )
     stack: list[tuple[str | int, ...]] = field(
         default_factory=list[tuple[str | int, ...]]
     )
@@ -696,15 +701,21 @@ def _eval_reference(
 
     cycle_key: tuple[int | str, ...] = (id(state.root), *resolved_parts)
     if cycle_key in state.seen:
-        msg = f"Interpolation cycle detected at {_format_path(resolved_parts)}"
-        raise InterpolationError(msg)
+        cycle_start = state.references.index(cycle_key)
+        cycle_keys = (*state.references[cycle_start:], cycle_key)
+        cycle_path = tuple(tuple(key[1:]) for key in cycle_keys)
+        rendered = " -> ".join(_format_path(path) for path in cycle_path)
+        msg = f"Interpolation cycle detected: {rendered}"
+        raise InterpolationError(msg, cycle_path=cycle_path)
     state.seen.add(cycle_key)
+    state.references.append(cycle_key)
     try:
         value = _walk(state.root, resolved_parts)
         if isinstance(value, str | Mapping | list):
             return _resolve_value(value, tuple(resolved_parts), state)
         return value
     finally:
+        state.references.pop()
         state.seen.discard(cycle_key)
 
 

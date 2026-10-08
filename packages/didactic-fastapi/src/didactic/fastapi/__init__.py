@@ -23,7 +23,7 @@ from didactic.fastapi._adapter import (
     register_validation_handler,
 )
 
-__version__ = "0.17.1"
+__version__ = "0.17.2"
 
 __all__ = [
     "__version__",

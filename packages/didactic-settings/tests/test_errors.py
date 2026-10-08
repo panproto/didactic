@@ -86,7 +86,10 @@ def test_override_syntax_error_is_a_config_error_without_a_path() -> None:
 
 def test_interpolation_error_path() -> None:
     assert InterpolationError("m").path is None
+    assert InterpolationError("m").cycle_path is None
     assert InterpolationError("m", path=("a", 0)).path == ("a", 0)
+    cycle_path = (("a",), ("b", 0), ("a",))
+    assert InterpolationError("m", cycle_path=cycle_path).cycle_path == cycle_path
 
 
 def test_slotted_schema_cannot_carry_provenance() -> None:
