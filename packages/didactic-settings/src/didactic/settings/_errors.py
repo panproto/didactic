@@ -188,15 +188,26 @@ class InterpolationError(ValueError):
         raised; ``None`` when no leaf was being resolved (a direct call to
         :func:`~didactic.settings.lookup` outside an evaluation, a bare
         string passed to :func:`~didactic.settings.resolve`).
+    cycle_path
+        Complete closed reference cycle in evaluation order, or ``None``
+        when the failure is not a cycle. Each member is an absolute path
+        into the interpolation root; the first path is repeated at the end
+        to close the cycle.
     """
 
     path: tuple[str | int, ...] | None
+    cycle_path: tuple[tuple[str | int, ...], ...] | None
 
     def __init__(
-        self, message: str, *, path: tuple[str | int, ...] | None = None
+        self,
+        message: str,
+        *,
+        path: tuple[str | int, ...] | None = None,
+        cycle_path: tuple[tuple[str | int, ...], ...] | None = None,
     ) -> None:
         super().__init__(message)
         self.path = path
+        self.cycle_path = cycle_path
 
 
 __all__ = [

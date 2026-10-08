@@ -79,10 +79,55 @@ def test_missing_reference_raises() -> None:
         resolve("${a.b}", root=root)
 
 
-def test_cycle_detection() -> None:
+def test_two_node_cycle_reports_the_complete_closed_path() -> None:
     root = {"a": "${b}", "b": "${a}"}
-    with pytest.raises(InterpolationError, match="cycle"):
+    with pytest.raises(InterpolationError, match=r"a -> b -> a") as info:
         resolve("${a}", root=root)
+    assert info.value.cycle_path == (("a",), ("b",), ("a",))
+
+
+def test_long_cycle_reports_every_node_in_traversal_order() -> None:
+    root = {"a": "${b}", "b": "${c}", "c": "${a}"}
+    with pytest.raises(InterpolationError, match=r"a -> b -> c -> a") as info:
+        resolve("${a}", root=root)
+    assert info.value.path == ("c",)
+    assert info.value.cycle_path == (("a",), ("b",), ("c",), ("a",))
+
+
+def test_list_index_paths_are_rendered_in_full() -> None:
+    root = {"groups": ["${groups[1]}", "${groups[0]}"]}
+    with pytest.raises(
+        InterpolationError,
+        match=r"groups\[0\] -> groups\[1\] -> groups\[0\]",
+    ) as info:
+        resolve("${groups[0]}", root=root)
+    assert info.value.cycle_path == (
+        ("groups", 0),
+        ("groups", 1),
+        ("groups", 0),
+    )
+
+
+def test_relative_cycle_paths_are_rendered_as_absolute_paths() -> None:
+    root = {"group": {"left": "${.right}", "right": "${.left}"}}
+    with pytest.raises(
+        InterpolationError, match=r"group\.left -> group\.right -> group\.left"
+    ) as info:
+        resolve("${group.left}", root=root)
+    assert info.value.cycle_path == (
+        ("group", "left"),
+        ("group", "right"),
+        ("group", "left"),
+    )
+
+
+def test_acyclic_shared_references_remain_accepted() -> None:
+    root = {"common": "value", "left": "${common}", "right": "${common}"}
+    assert resolve(root, root=root) == {
+        "common": "value",
+        "left": "value",
+        "right": "value",
+    }
 
 
 def test_relative_above_root_raises() -> None:

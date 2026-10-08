@@ -181,14 +181,15 @@ def test_lookup_refuses_a_non_path_argument() -> None:
 
 
 def test_cycle_through_a_resolver_is_reported_as_a_cycle() -> None:
-    def self_path(*_: str) -> str:
-        return str(lookup("loop"))
+    root = {"a": "${follow:b}", "b": "${a}"}
 
-    with pytest.raises(InterpolationError, match="cycle") as info:
-        resolve(
-            ROOT["loop"], root=ROOT, here=("loop",), resolvers={"bad.self": self_path}
-        )
-    assert info.value.path == ("loop",)
+    def follow(path: str) -> str:
+        return str(lookup(path))
+
+    with pytest.raises(InterpolationError, match=r"a -> b -> a") as info:
+        resolve("${a}", root=root, resolvers={"follow": follow})
+    assert info.value.path == ("b",)
+    assert info.value.cycle_path == (("a",), ("b",), ("a",))
 
 
 def test_lookup_unresolved_path_raises_the_engine_error() -> None:
