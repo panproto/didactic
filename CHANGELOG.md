@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-10-08
+
+### Fixed
+
+- Interpolation cycle diagnostics now report the complete closed reference
+  path in deterministic evaluation order, such as `a -> b -> c -> a`.
+  `InterpolationError.cycle_path` exposes the same path structurally, while
+  `InterpolationError.path` remains the leaf whose evaluation exposed the
+  cycle. ([#74])
+
+[#74]: https://github.com/panproto/didactic/issues/74
+
 ## [0.17.1] - 2026-09-16
 
 ### Fixed
