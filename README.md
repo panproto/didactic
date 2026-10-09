@@ -20,7 +20,7 @@ schema definition.
 ## Install
 
 Didactic requires Python 3.14 or later. The core distribution requires
-`panproto>=0.74.2`.
+`panproto>=0.75.0`.
 
 ```sh
 pip install didactic

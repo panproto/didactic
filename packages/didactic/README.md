@@ -13,7 +13,7 @@ migration, compatibility checks, code generation, and schema version control.
 
 ## Install
 
-Didactic requires Python 3.14 or later and `panproto>=0.74.2`.
+Didactic requires Python 3.14 or later and `panproto>=0.75.0`.
 
 ```sh
 pip install didactic
