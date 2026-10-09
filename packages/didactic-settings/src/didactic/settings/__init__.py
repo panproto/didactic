@@ -98,7 +98,7 @@ from didactic.settings._values import ConfigValue, KeyPath, nest_override
 # the alias keeps that import explicit rather than incidental
 _ = _builtin_resolvers
 
-__version__ = "0.17.3"
+__version__ = "0.17.4"
 
 __all__ = [
     "CliSource",

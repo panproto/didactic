@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-10-09
+
+### Fixed
+
+- The root README, packaged `didactic` README, and stability guide now state
+  the required `panproto>=0.75.0` compatibility floor. The packaged README is
+  republished so PyPI no longer advertises the obsolete 0.74.x requirement.
+
 ## [0.17.3] - 2026-10-09
 
 ### Added
