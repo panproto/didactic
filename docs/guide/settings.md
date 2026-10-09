@@ -567,6 +567,12 @@ The grammar is OmegaConf's:
   substitutes the typed value, and a substring use renders it as text;
 - `\${literal}` escapes.
 
+Within a resolver argument, a backslash quotes only a character with syntactic
+meaning: comma, closing brace, backslash, quote, bracket or brace, or the
+interpolation opener `${`. Before any other character the backslash is literal,
+so `${path:corpora\train.txt}` passes `corpora\train.txt` without loss. This
+lets a resolver distinguish a backslash-spelled path from `corporatrain.txt`.
+
 A cycle between references is reported as a cycle, and nesting deeper than 64
 levels is refused. An expression may sit at a leaf, a list, a map or a model
 slot: `section: ${other}` pastes the subtree `other` resolves to, and

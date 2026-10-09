@@ -15,7 +15,8 @@ The grammar is OmegaConf's:
   contain interpolations. Built-in resolvers are registered by
   :mod:`didactic.settings._resolvers`; user code adds more via
   :func:`register_resolver`, or passes a per-call mapping to
-  :func:`resolve`.
+  :func:`resolve`. A backslash quotes resolver-argument metacharacters;
+  before any other character it remains literal.
 - ``\${literal}``: escape; produces a literal ``${literal}``.
 
 Cycle detection raises :class:`~didactic.settings.InterpolationError`
@@ -223,6 +224,9 @@ type _Node = _Literal | _Reference | _ResolverCall
 
 
 _OPENERS: Final = {"[": "]", "{": "}"}
+_RESOLVER_SINGLE_CHAR_ESCAPES: Final = frozenset(
+    {",", "\\", "'", '"', *_OPENERS, *_OPENERS.values()}
+)
 
 
 @dataclass
@@ -399,7 +403,10 @@ class _Parser:
         Arguments are separated by commas at bracket depth zero and
         outside quotes, so ``[1, 2]``, ``{"a": 1}`` and ``"x,y"`` each
         pass as one argument. Surrounding whitespace is dropped, and an
-        argument that is entirely one quoted string loses its quotes.
+        argument that is entirely one quoted string loses its quotes. A
+        backslash is consumed only before a single-character argument
+        metacharacter or the interpolation opener ``${``; otherwise the
+        backslash is part of the argument.
         """
         self.pos += 1  # consume ":"
         args: list[tuple[_Node, ...]] = []
@@ -420,9 +427,7 @@ class _Parser:
 
         while self.pos < len(self.text):
             ch = self.text[self.pos]
-            if ch == "\\" and self.pos + 1 < len(self.text):
-                buf.append(self.text[self.pos + 1])
-                self.pos += 2
+            if ch == "\\" and self._consume_resolver_escape(buf):
                 continue
             if ch == "$" and self._peek(1) == "{":
                 flush_literal()
@@ -449,6 +454,21 @@ class _Parser:
             self.pos += 1
         msg = "Unterminated resolver call (missing '}')"
         raise InterpolationError(msg)
+
+    def _consume_resolver_escape(self, buf: list[str]) -> bool:
+        """Consume one resolver-argument escape, preserving ordinary slashes."""
+        if self.pos + 1 >= len(self.text):
+            return False
+        nxt = self.text[self.pos + 1]
+        if nxt in _RESOLVER_SINGLE_CHAR_ESCAPES or (
+            nxt == "$" and self._peek(2) == "{"
+        ):
+            buf.append(nxt)
+            self.pos += 2
+        else:
+            buf.append("\\")
+            self.pos += 1
+        return True
 
     def _read_until(self, terminator: str) -> str:
         """Read literal text up to ``terminator``, which is left unread."""
