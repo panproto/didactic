@@ -341,6 +341,58 @@ def test_data_only_commit_records_new_data(fresh_repo_path: Path) -> None:
     assert dataset.data != b'[{"id": "b"}]'
 
 
+def test_add_data_accepts_persisted_schema_id(fresh_repo_path: Path) -> None:
+    """A later dataset can bind to an exact non-HEAD persisted schema."""
+    repo = dx.Repository.init(fresh_repo_path)
+
+    repo.add(_build_minimal_schema("configuration"))
+    initial_config = fresh_repo_path / "initial-config.json"
+    initial_config.write_bytes(b'[{"id": "config-1"}]')
+    repo.add_data(initial_config, key="configuration")
+    first = repo.commit("configuration", author="Test <test@example.com>")
+    config_schema_id = repo.data_at(first)[0].schema_id
+
+    repo.add(_build_minimal_schema("record"))
+    initial_record = fresh_repo_path / "initial-record.json"
+    initial_record.write_bytes(b'[{"id": "record-1"}]')
+    repo.add_data(initial_record, key="record")
+    second = repo.commit("record", author="Test <test@example.com>")
+    record_schema_id = repo.data_at(second)[0].schema_id
+
+    next_config = fresh_repo_path / "next-config.json"
+    next_config.write_bytes(b'[{"id": "config-2"}]')
+    next_record = fresh_repo_path / "next-record.json"
+    next_record.write_bytes(b'[{"id": "record-2"}]')
+
+    head_before = repo.head()
+    repo.add_data(
+        next_config,
+        key="configuration",
+        schema_id=config_schema_id,
+    )
+    repo.add_data(next_record, key="record")
+    assert repo.head() == head_before
+
+    third = repo.commit("configuration+record", author="Test <test@example.com>")
+    datasets = {dataset.key: dataset for dataset in repo.data_at(third)}
+    assert datasets["configuration"].schema_id == config_schema_id
+    assert datasets["record"].schema_id == record_schema_id
+
+
+def test_add_data_rejects_missing_persisted_schema_id(
+    fresh_repo_path: Path,
+) -> None:
+    """The wrapper preserves panproto's typed error for a missing object."""
+    repo = dx.Repository.init(fresh_repo_path)
+    data_file = fresh_repo_path / "records.json"
+    data_file.write_bytes(_RECORDS)
+
+    with pytest.raises(panproto.VcsError):
+        repo.add_data(data_file, schema_id="0" * 64)
+
+    assert repo.has_staged() is False
+
+
 def test_data_at_is_empty_without_committed_data(fresh_repo_path: Path) -> None:
     """A revision that committed only a schema has no datasets."""
     repo, cid = _committed_repo(fresh_repo_path)
