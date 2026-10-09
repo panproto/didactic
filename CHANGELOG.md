@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-10-09
+
+### Fixed
+
+- Resolver arguments now preserve a backslash before characters without
+  interpolation syntax instead of silently deleting it. Escapes for commas,
+  closing braces, backslashes, quotes, brackets, braces, and `${` retain their
+  literal behavior across direct resolution, traced resolution, and settings
+  composition. ([#79])
+
+[#79]: https://github.com/panproto/didactic/issues/79
+
 ## [0.17.3] - 2026-10-09
 
 ### Added

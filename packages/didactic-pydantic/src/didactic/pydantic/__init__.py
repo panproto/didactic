@@ -45,7 +45,7 @@ Examples
 from didactic.pydantic._adapter import from_pydantic
 from didactic.pydantic._reverse import to_pydantic
 
-__version__ = "0.17.3"
+__version__ = "0.17.4"
 
 __all__ = [
     "__version__",
