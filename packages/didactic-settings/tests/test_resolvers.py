@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from didactic.settings import (
@@ -10,6 +12,7 @@ from didactic.settings import (
     lookup,
     register_resolver,
     resolve,
+    resolve_traced,
     unregister_resolver,
 )
 from didactic.settings._resolvers import register_builtins
@@ -20,6 +23,21 @@ ROOT = {
     "loop": "${bad.self:x}",
     "text": "7",
 }
+
+
+def _capture_into(received: list[str]) -> Callable[[str], str]:
+    """Build a typed one-argument resolver that records its input."""
+
+    def capture(value: str) -> str:
+        received.append(value)
+        return value
+
+    return capture
+
+
+def _identity(value: str) -> str:
+    """Return a resolver argument unchanged."""
+    return value
 
 
 def test_builtins_are_registered() -> None:
@@ -234,6 +252,108 @@ def test_register_builtins_restores_an_unregistered_builtin() -> None:
 
 
 # -- argument splitting and exception wrapping -----------------------------------------
+
+
+@pytest.mark.parametrize("ordinary", ["t", "x", "0", ".", "/", ":", "-", " ", "$", "@"])
+def test_resolver_arguments_preserve_backslashes_before_ordinary_characters(
+    ordinary: str,
+) -> None:
+    received: list[str] = []
+    source = f"${{capture:left\\{ordinary}right}}"
+
+    result = resolve(
+        source,
+        root=ROOT,
+        resolvers={"capture": _capture_into(received)},
+    )
+
+    assert result == f"left\\{ordinary}right"
+    assert received == [f"left\\{ordinary}right"]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (r"${capture:a\,b}", "a,b"),
+        (r"${capture:a\}b}", "a}b"),
+        (r"${capture:a\\b}", r"a\b"),
+        (r"${capture:\${literal}}", "${literal}"),
+        (r"${capture:a\"b}", 'a"b'),
+        (r"${capture:a\'b}", "a'b"),
+        (r"${capture:a\[b}", "a[b"),
+        (r"${capture:a\]b}", "a]b"),
+        (r"${capture:a\{b}", "a{b"),
+    ],
+)
+def test_resolver_argument_metacharacter_escapes_remain_literal(
+    source: str,
+    expected: str,
+) -> None:
+    received: list[str] = []
+
+    result = resolve(
+        source,
+        root=ROOT,
+        resolvers={"capture": _capture_into(received)},
+    )
+
+    assert result == expected
+    assert received == [expected]
+
+
+def test_nested_and_quoted_resolver_arguments_preserve_ordinary_backslashes() -> None:
+    received: list[str] = []
+
+    quoted = resolve(
+        r'${capture:"corpora\train.txt"}',
+        root=ROOT,
+        resolvers={"capture": _capture_into(received)},
+    )
+    nested = resolve(
+        r"${capture:${identity:corpora\train.txt}}",
+        root=ROOT,
+        resolvers={
+            "capture": _capture_into(received),
+            "identity": _identity,
+        },
+    )
+
+    assert quoted == r"corpora\train.txt"
+    assert nested == r"corpora\train.txt"
+    assert received == [r"corpora\train.txt", r"corpora\train.txt"]
+
+
+def test_resolve_traced_preserves_argument_and_expression_source() -> None:
+    source = r"${capture:corpora\train.txt}"
+    received: list[str] = []
+
+    resolved, expressions = resolve_traced(
+        {"path": source},
+        resolvers={"capture": _capture_into(received)},
+    )
+
+    assert resolved == {"path": r"corpora\train.txt"}
+    assert expressions == {("path",): source}
+    assert received == [r"corpora\train.txt"]
+
+
+def test_preserved_argument_backslash_does_not_change_error_path() -> None:
+    def reject(value: str) -> str:
+        assert value == r"corpora\train.txt"
+        raise ValueError("unsupported path spelling")
+
+    with pytest.raises(InterpolationError) as info:
+        resolve(
+            {"path": r"${reject:corpora\train.txt}"},
+            root={},
+            resolvers={"reject": reject},
+        )
+
+    assert info.value.path == ("path",)
+    assert str(info.value) == (
+        "Resolver 'reject' raised ValueError: unsupported path spelling; "
+        "at config key 'path'"
+    )
 
 
 def test_arguments_split_outside_brackets_braces_and_quotes() -> None:

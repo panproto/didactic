@@ -121,6 +121,28 @@ def test_interpolation_resolves_against_composed_root(tmp_path: Path) -> None:
     assert config.paths["out_dir"] == "/tmp/x/out"
 
 
+def test_composition_preserves_resolver_argument_backslashes(tmp_path: Path) -> None:
+    received: list[str] = []
+
+    def capture(value: str) -> str:
+        received.append(value)
+        return value
+
+    cfg_path = _write_yaml(
+        tmp_path / "cfg.yaml",
+        "name: '${capture:corpora\\train.txt}'\n",
+    )
+
+    config = compose(
+        cfg_path,
+        schema=FakeSchema,
+        resolvers={"capture": capture},
+    )
+
+    assert config.name == r"corpora\train.txt"
+    assert received == [r"corpora\train.txt"]
+
+
 def test_env_interpolation_in_yaml(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
