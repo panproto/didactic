@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-10-09
+
+### Added
+
+- Model schemas now contain a deterministic vertex for every declared field,
+  with the field's didactic sort, structural kind, requiredness, usage mode,
+  axioms, serialized name, and nominal or structural identity. Scalar,
+  reference, embedded, and tagged-union fields can thus be addressed
+  independently by panproto VCS operations.
+- `Repository.blame_field()` exposes first-parent field attribution as a typed
+  `Blame` record. Attribution follows a field through committed schema
+  migrations, including field renames, using panproto 0.75.0's migration-aware
+  vertex blame.
+
+### Fixed
+
+- `Repository.add(Model)` no longer erases field structure or
+  `FieldSpec.nominal`. Same-named Models with different field shapes now commit
+  different schemas, while Model data staging, replay, schema validation, and
+  codec round trips continue to use the field-addressable representation.
+  ([#75])
+
+[#75]: https://github.com/panproto/didactic/issues/75
+
 ## [0.17.2] - 2026-10-08
 
 ### Fixed

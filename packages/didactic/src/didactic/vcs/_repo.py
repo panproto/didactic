@@ -12,9 +12,10 @@ Surface
 The wrapper covers initialisation, staging (either a panproto
 ``Schema`` or a [Model][didactic.api.Model] subclass), committing, the
 read-only introspection accessors (``head``, ``log``, ``working_dir``,
-branch listing), and ref / branch / tag operations. Staging a Model
-class synthesises a single-vertex schema via
-``panproto.Protocol.from_theories`` over the Model's Theory.
+branch listing), field-level blame, and ref / branch / tag operations.
+Staging a Model class synthesises a schema with one Model vertex and one
+addressable vertex per declared field. Field vertices retain their type,
+validation, usage, serialized-name, and identity metadata.
 
 Notes
 -----
@@ -75,6 +76,32 @@ class CommittedDataset:
     data: bytes
     record_count: int
     key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Blame:
+    """The commit that introduced a Model field.
+
+    Returned by [blame_field][didactic.api.Repository.blame_field]. The
+    wrapper gives callers a stable didactic type rather than exposing
+    panproto's dict-shaped binding result.
+
+    Parameters
+    ----------
+    commit_id
+        Object id of the commit that introduced the field vertex.
+    author
+        Author recorded on that commit.
+    timestamp
+        Commit timestamp as Unix seconds.
+    message
+        Commit message.
+    """
+
+    commit_id: str
+    author: str
+    timestamp: int
+    message: str
 
 
 class Repository:
@@ -287,6 +314,39 @@ class Repository:
         """
         return [_committed_dataset(ds) for ds in self._inner.data_at(ref)]
 
+    def blame_field(self, ref: str, model: type[Model], field: str) -> Blame:
+        """Find the commit that introduced a declared Model field.
+
+        Parameters
+        ----------
+        ref
+            Branch name, tag, ``HEAD``, or commit id from which to walk
+            first-parent history.
+        model
+            Model class whose schema was committed.
+        field
+            Python name of one of ``model``'s declared fields.
+
+        Returns
+        -------
+        Blame
+            Attribution for the commit that introduced the field vertex.
+
+        Raises
+        ------
+        KeyError
+            If ``field`` is not declared by ``model``.
+        panproto.VcsError
+            If ``ref`` does not resolve or the field vertex is absent from
+            the reachable schema history.
+        """
+        if field not in model.__field_specs__:
+            msg = f"{model.__name__} has no field {field!r}"
+            raise KeyError(msg)
+        commit_id = self.resolve_ref(ref)
+        entry = self._inner.blame_vertex(commit_id, _field_vertex_id(model, field))
+        return _blame(entry)
+
     # mutation ------------------------------------------------------
 
     def add(self, target: panproto.Schema | type) -> None:
@@ -492,8 +552,47 @@ class Repository:
         return f"Repository(at={self._inner.working_dir!r})"
 
 
+_FIELD_EDGE_KIND = "field"
+_FIELD_VERTEX_KIND = "field"
+_FIELD_SORT_CONSTRAINT = "didactic:sort"
+_FIELD_KIND_CONSTRAINT = "didactic:kind"
+_FIELD_REQUIRED_CONSTRAINT = "didactic:required"
+_FIELD_USAGE_MODE_CONSTRAINT = "didactic:usage-mode"
+_FIELD_AXIOM_CONSTRAINT = "didactic:axiom"
+
+
+def protocol_from_model(
+    cls: type[Model], *, name: str | None = None
+) -> panproto.Protocol:
+    """Build the panproto protocol shared by a Model's schema operations."""
+    import panproto  # noqa: PLC0415
+
+    from didactic.theory._theory import build_theory  # noqa: PLC0415
+
+    return panproto.Protocol.from_theories(
+        name=name or cls.__name__,
+        schema_theory=build_theory(cls),
+        obj_kinds=["object", _FIELD_VERTEX_KIND],
+        edge_rules=[
+            {
+                "edge_kind": _FIELD_EDGE_KIND,
+                "src_kinds": ["object"],
+                "tgt_kinds": [_FIELD_VERTEX_KIND],
+            }
+        ],
+        constraint_sorts=[
+            _FIELD_SORT_CONSTRAINT,
+            _FIELD_KIND_CONSTRAINT,
+            _FIELD_REQUIRED_CONSTRAINT,
+            _FIELD_USAGE_MODE_CONSTRAINT,
+            _FIELD_AXIOM_CONSTRAINT,
+        ],
+        nominal_identity=True,
+    )
+
+
 def schema_from_model(cls: type[Model]) -> panproto.Schema:
-    """Build a single-vertex panproto Schema from a Model class.
+    """Build a field-addressable panproto Schema from a Model class.
 
     Parameters
     ----------
@@ -503,24 +602,45 @@ def schema_from_model(cls: type[Model]) -> panproto.Schema:
     Returns
     -------
     panproto.Schema
-        A schema with the Model's Theory acting as both the
-        schema-theory and the instance-theory of a synthesised
-        ``Protocol``, plus one vertex named after the class with
-        kind ``"object"``.
+        A schema with the Model's Theory acting as both the schema-theory
+        and instance-theory of a synthesised ``Protocol``. It contains one
+        root vertex named after the class and one field vertex per
+        ``FieldSpec``, connected to the root by a labelled ``field`` edge.
+        Each field vertex records the didactic sort, structural kind,
+        requiredness, usage mode, and axioms as constraints, plus an explicit
+        nominal or structural identity flag.
     """
-    import panproto  # noqa: PLC0415
-
-    from didactic.theory._theory import build_theory  # noqa: PLC0415
-
-    theory = build_theory(cls)
-    protocol = panproto.Protocol.from_theories(
-        name=cls.__name__,
-        schema_theory=theory,
-        obj_kinds=["object"],
-    )
+    protocol = protocol_from_model(cls)
     builder = protocol.schema()
     builder.vertex(cls.__name__, "object")
+    for field_name, spec in cls.__field_specs__.items():
+        vertex_id = _field_vertex_id(cls, field_name)
+        builder.vertex(vertex_id, _FIELD_VERTEX_KIND)
+        builder.nominal(vertex_id, spec.nominal)
+        builder.edge(
+            cls.__name__,
+            vertex_id,
+            _FIELD_EDGE_KIND,
+            spec.alias or field_name,
+        )
+        builder.constraint(vertex_id, _FIELD_SORT_CONSTRAINT, spec.translation.sort)
+        builder.constraint(
+            vertex_id, _FIELD_KIND_CONSTRAINT, spec.translation.inner_kind
+        )
+        builder.constraint(
+            vertex_id,
+            _FIELD_REQUIRED_CONSTRAINT,
+            str(spec.is_required).lower(),
+        )
+        builder.constraint(vertex_id, _FIELD_USAGE_MODE_CONSTRAINT, spec.usage_mode)
+        for axiom in spec.axioms:
+            builder.constraint(vertex_id, _FIELD_AXIOM_CONSTRAINT, axiom)
     return builder.build()
+
+
+def _field_vertex_id(cls: type[Model], field: str) -> str:
+    """Return the deterministic schema vertex id for a Model field."""
+    return f"{cls.__name__}.{field}"
 
 
 def _committed_dataset(ds: dict[str, str | bytes | int | None]) -> CommittedDataset:
@@ -546,7 +666,26 @@ def _committed_dataset(ds: dict[str, str | bytes | int | None]) -> CommittedData
     )
 
 
+def _blame(entry: JsonObject) -> Blame:
+    """Narrow panproto's blame mapping to the public ``Blame`` record."""
+    commit_id = entry["commit_id"]
+    author = entry["author"]
+    timestamp = entry["timestamp"]
+    message = entry["message"]
+    assert isinstance(commit_id, str)
+    assert isinstance(author, str)
+    assert isinstance(timestamp, int)
+    assert isinstance(message, str)
+    return Blame(
+        commit_id=commit_id,
+        author=author,
+        timestamp=timestamp,
+        message=message,
+    )
+
+
 __all__ = [
+    "Blame",
     "CommittedDataset",
     "Repository",
 ]

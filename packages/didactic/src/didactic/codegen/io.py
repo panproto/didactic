@@ -179,7 +179,7 @@ def _build_instance(schema: panproto.Schema, model: Model) -> panproto.Instance:
     # come out as the wire-shape strings the schema expects, instead
     # of leaking through as raw Python objects that ``json.dumps``
     # cannot serialise.
-    json_str = model.model_dump_json()
+    json_str = model.model_dump_json(by_alias=True)
     return panproto.Instance.from_json(
         schema,
         type(model).__name__,
@@ -200,10 +200,10 @@ def _instance_to_payload(instance: object) -> dict[str, object]:
             ...
         }
 
-    where each ``extra_fields`` value is wrapped in a single-key
-    ``{<sort>: <value>}`` envelope (``"Str"``, ``"Int"``, ``"Bool"``,
-    ``"Float"``, ``"Bytes"``, ...). This helper walks to the root node,
-    unwraps each envelope, and returns a plain dict ready for
+    A legacy single-vertex schema stores every value in the root node's
+    ``extra_fields``. A field-addressable schema stores each declared field
+    in a child node connected to the root by a labelled arc. This helper
+    accepts both representations and returns a plain dict ready for
     ``Model.model_validate``.
     """
     raw = cast("panproto.Instance", instance).to_dict()
@@ -220,7 +220,38 @@ def _instance_to_payload(instance: object) -> dict[str, object]:
     payload: dict[str, object] = {}
     for name, wrapped in cast("dict[str, object]", extra).items():
         payload[name] = _unwrap_sort_envelope(wrapped)
+    arcs = raw.get("arcs", [])
+    if not isinstance(arcs, list):
+        return payload
+    typed_nodes = cast("dict[object, object]", nodes)
+    for arc in arcs:
+        if not isinstance(arc, list | tuple) or len(arc) != 3:
+            continue
+        src, target, edge = arc
+        if src != root_id or not isinstance(edge, dict):
+            continue
+        name = cast("dict[str, object]", edge).get("name")
+        child = typed_nodes.get(target)
+        if not isinstance(name, str) or not isinstance(child, dict):
+            continue
+        payload[name] = _instance_node_value(cast("dict[str, object]", child))
     return payload
+
+
+def _instance_node_value(node: dict[str, object]) -> object:
+    """Decode one field vertex from panproto's graph-shaped instance."""
+    value = node.get("value")
+    if isinstance(value, dict):
+        present = cast("dict[str, object]", value).get("Present")
+        if present is not None:
+            return _unwrap_sort_envelope(present)
+    extra = node.get("extra_fields")
+    if not isinstance(extra, dict):
+        return None
+    return {
+        name: _unwrap_sort_envelope(wrapped)
+        for name, wrapped in cast("dict[str, object]", extra).items()
+    }
 
 
 def _coerce_payload(
@@ -236,8 +267,9 @@ def _coerce_payload(
     """
     out: dict[str, FieldValue] = {}
     specs = schema.__field_specs__
+    specs_by_wire_name = {spec.alias: spec for spec in specs.values() if spec.alias}
     for name, value in payload.items():
-        spec = specs.get(name)
+        spec = specs.get(name) or specs_by_wire_name.get(name)
         if spec is None:
             # field is unknown to the schema; pass through as-is.
             # ``cast`` widens to ``FieldValue`` because the runtime
@@ -246,11 +278,12 @@ def _coerce_payload(
             # ``FieldValue``.
             out[name] = cast("FieldValue", value)
             continue
+        output_name = spec.name
         try:
-            out[name] = spec.translation.from_json(cast("JsonValue", value))
+            out[output_name] = spec.translation.from_json(cast("JsonValue", value))
         except TypeError, ValueError:
             # leave already-Python-shape values untouched
-            out[name] = cast("FieldValue", value)
+            out[output_name] = cast("FieldValue", value)
     return out
 
 
