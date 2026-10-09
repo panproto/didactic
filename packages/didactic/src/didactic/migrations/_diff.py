@@ -100,18 +100,19 @@ def classify_change(old: type[Model], new: type[Model]) -> JsonObject:
     """
     import panproto  # noqa: PLC0415
 
-    from didactic.theory._theory import build_theory  # noqa: PLC0415
-    from didactic.vcs._repo import schema_from_model  # noqa: PLC0415
+    from didactic.vcs._repo import (  # noqa: PLC0415
+        protocol_from_model,
+        schema_from_model,
+    )
 
     old_schema = schema_from_model(old)
     new_schema = schema_from_model(new)
     # the protocol carries the theory a Schema is validated against;
     # for diff_and_classify we synthesise a covering protocol over
     # the new theory (the new shape is the target of the diff)
-    protocol = panproto.Protocol.from_theories(
+    protocol = protocol_from_model(
+        new,
         name=f"{old.__name__}_vs_{new.__name__}",
-        schema_theory=build_theory(new),
-        obj_kinds=["object"],
     )
 
     compat = panproto.diff_and_classify(old_schema, new_schema, protocol)

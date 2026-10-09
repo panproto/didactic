@@ -114,7 +114,7 @@ from didactic.synthesis._synthesis import (
 )
 from didactic.types import _types_lib as types
 from didactic.vcs._backref import ModelPool, resolve_backrefs
-from didactic.vcs._repo import CommittedDataset, Repository
+from didactic.vcs._repo import Blame, CommittedDataset, Repository
 
 __version__ = "0.17.2"
 
@@ -130,6 +130,7 @@ __all__ = [
     "Axiom",
     "Backref",
     "BaseModel",
+    "Blame",
     "Body",
     "Branch",
     "Case",

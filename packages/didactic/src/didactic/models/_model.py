@@ -553,7 +553,9 @@ class Model(metaclass=ModelMeta):
                 result[dname] = value
         return result
 
-    def model_dump_json(self, *, indent: int | None = None) -> str:
+    def model_dump_json(
+        self, *, indent: int | None = None, by_alias: bool = False
+    ) -> str:
         """Render this Model as a JSON string.
 
         Parameters
@@ -561,6 +563,8 @@ class Model(metaclass=ModelMeta):
         indent
             JSON indentation level. ``None`` produces compact JSON; an
             integer produces pretty-printed output.
+        by_alias
+            If ``True``, use each field's serialisation alias where set.
 
         Returns
         -------
@@ -583,7 +587,7 @@ class Model(metaclass=ModelMeta):
         Model.model_validate_json : the inverse direction.
         """
         return json.dumps(
-            _to_json_safe(self.model_dump()),
+            _to_json_safe(self.model_dump(by_alias=by_alias)),
             indent=indent,
             sort_keys=False,
             ensure_ascii=False,

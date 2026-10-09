@@ -17,9 +17,12 @@ print(repo.head())  # None for a freshly initialised repo
 ## Staging and committing
 
 `Repository.add` accepts two shapes. The simplest is to pass a
-`dx.Model` subclass directly; didactic synthesises a single-vertex
-schema for it via `panproto.Protocol.from_theories` over the Model's
-Theory:
+`dx.Model` subclass directly. Didactic synthesises a schema with one
+vertex for the Model and one deterministic `ModelName.field_name`
+vertex for every declared field. Each field vertex records its didactic
+sort, structural kind, requiredness, usage mode, axioms, and nominal or
+structural identity; the edge from the Model records the serialized field
+name:
 
 ```python
 import didactic.api as dx
@@ -46,6 +49,23 @@ schema = builder.build()
 repo.add(schema)
 repo.commit("openapi ping schema", author="Ada <ada@example.org>")
 ```
+
+## Blaming a field
+
+`blame_field` attributes one declared field without exposing panproto's
+repository handle:
+
+```python
+blame = repo.blame_field("HEAD", User, "email")
+print(blame.commit_id)
+print(blame.author)
+print(blame.message)
+```
+
+The walk follows first-parent history. A committed schema migration that
+maps an old field vertex to a renamed one preserves the original field's
+attribution. Fields added without a migration preimage are attributed to
+the adding commit.
 
 ## Branches and refs
 

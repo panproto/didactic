@@ -107,17 +107,19 @@ def synthesise_migration(
         )
         raise ValueError(msg)
 
-    from didactic.vcs._repo import schema_from_model  # noqa: PLC0415
+    from didactic.vcs._repo import (  # noqa: PLC0415
+        protocol_from_model,
+        schema_from_model,
+    )
 
     src_schema = schema_from_model(source)
     tgt_schema = schema_from_model(target)
 
     # build a Protocol that covers both Models; reuse source's
     # synthesised protocol for symmetry
-    protocol = panproto.Protocol.from_theories(
+    protocol = protocol_from_model(
+        source,
         name=f"{source.__name__}_to_{target.__name__}",
-        schema_theory=source.__theory__,
-        obj_kinds=["object"],
     )
 
     if stringency is None:
