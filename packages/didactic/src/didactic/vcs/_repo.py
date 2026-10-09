@@ -374,7 +374,14 @@ class Repository:
         # ``Schema`` arm of the union is left.
         self._inner.add(cast("panproto.Schema", target))
 
-    def add_data(self, path: str | PathLike[str], *, key: str | None = None) -> None:
+    def add_data(
+        self,
+        path: str | PathLike[str],
+        *,
+        key: str | None = None,
+        schema_id: str | None = None,
+        skip_verify: bool = False,
+    ) -> None:
         """Stage a data file for the next commit.
 
         Reads the file at ``path``, parses and validates its records, and
@@ -399,6 +406,14 @@ class Repository:
             own key (for example an AT-URI) so it can map the committed
             dataset back. When omitted, the dataset's key defaults to
             ``path``.
+        schema_id
+            Object id of a persisted schema to use when parsing, lifting,
+            and validating this dataset. Supplying an id does not change
+            HEAD or the staged schema. When omitted, panproto uses the
+            staged schema, or HEAD's schema when no schema is staged.
+        skip_verify
+            If ``True``, skip panproto's dataset verification step.
+            Defaults to ``False``.
 
         Notes
         -----
@@ -409,10 +424,16 @@ class Repository:
         Raises
         ------
         panproto.VcsError
-            If no schema is staged and the repository has no commits
-            yet, so the dataset has no schema to bind to.
+            If ``schema_id`` is malformed, missing, or does not name a
+            schema, or if no schema is staged and the repository has no
+            commits yet, so the dataset has no schema to bind to.
         """
-        self._inner.add_data(str(path), key)
+        self._inner.add_data(
+            str(path),
+            key=key,
+            schema_id=schema_id,
+            skip_verify=skip_verify,
+        )
 
     def commit(
         self,

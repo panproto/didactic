@@ -50,6 +50,27 @@ repo.add(schema)
 repo.commit("openapi ping schema", author="Ada <ada@example.org>")
 ```
 
+## Staging data against a persisted schema
+
+`Repository.add_data` normally validates a dataset against the staged schema,
+or HEAD's schema when no schema is staged. Pass `schema_id` to reuse an exact
+persisted schema without changing either of those schema pointers:
+
+```python
+repo.add_data(
+    "run-config.json",
+    key="configuration",
+    schema_id=config_schema_id,
+)
+repo.add_data("run-record.json", key="record")
+repo.commit("record run", author="Ada <ada@example.org>")
+```
+
+The committed configuration dataset records `config_schema_id`; the record
+dataset records the staged or HEAD schema id. This permits one commit to carry
+datasets governed by distinct persisted schemas while leaving field blame on
+the HEAD schema stable.
+
 ## Blaming a field
 
 `blame_field` attributes one declared field without exposing panproto's

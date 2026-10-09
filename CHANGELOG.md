@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-10-09
+
+### Added
+
+- `Repository.add_data(..., schema_id=...)` can validate and commit a dataset
+  against an exact persisted Panproto schema without changing HEAD or the
+  staged schema. The wrapper also exposes Panproto's `skip_verify` option.
+
 ## [0.17.4] - 2026-10-09
 
 ### Fixed
