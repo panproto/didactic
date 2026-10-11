@@ -114,7 +114,12 @@ from didactic.synthesis._synthesis import (
 )
 from didactic.types import _types_lib as types
 from didactic.vcs._backref import ModelPool, resolve_backrefs
-from didactic.vcs._repo import Blame, CommittedDataset, Repository
+from didactic.vcs._repo import (
+    Blame,
+    CommittedDataset,
+    DecodedCommittedDataset,
+    Repository,
+)
 
 __version__ = "0.17.5"
 
@@ -136,6 +141,7 @@ __all__ = [
     "Case",
     "CommittedDataset",
     "Correspondence",
+    "DecodedCommittedDataset",
     "DependentLens",
     "Embed",
     "Equation",

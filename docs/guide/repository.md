@@ -71,6 +71,32 @@ dataset records the staged or HEAD schema id. This permits one commit to carry
 datasets governed by distinct persisted schemas while leaving field blame on
 the HEAD schema stable.
 
+## Reading committed data
+
+`Repository.data_at` returns the canonical Panproto MessagePack bytes for each
+dataset at a revision. Use `Repository.decoded_data_at` when the caller needs
+ordinary JSON-like records instead:
+
+```python
+datasets = repo.decoded_data_at("release-candidate")
+for dataset in datasets:
+    print(dataset.key, dataset.schema_id, dataset.record_count)
+    users = [User.model_validate(record) for record in dataset.records]
+```
+
+The result retains each dataset's key, persisted schema id, and record count.
+Dataset order and record order match the commit. Maps, lists, strings,
+booleans, nulls, integers, and finite floats are decoded to their ordinary
+Python JSON shapes; validation against a current Model remains an explicit
+caller decision.
+
+Both accessors accept `HEAD`, a branch, a tag, a full commit id, or an accepted
+commit-id prefix. They traverse history without checking out the revision or
+changing HEAD, the working tree, or the staged schema. Missing or malformed
+refs, absent or tampered objects, and malformed canonical data raise Panproto's
+typed `VcsError`. The raw `CommittedDataset.data` bytes remain available for
+callers that need the canonical representation.
+
 ## Blaming a field
 
 `blame_field` attributes one declared field without exposing panproto's

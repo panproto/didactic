@@ -32,4 +32,6 @@ commit that introduced the original field.
 
 ::: didactic.api.CommittedDataset
 
+::: didactic.api.DecodedCommittedDataset
+
 ::: didactic.api.Blame

@@ -7,6 +7,7 @@ accessors, and the ``add``/``commit`` round trip).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -258,6 +259,169 @@ def test_data_at_returns_committed_dataset(fresh_repo_path: Path) -> None:
     # the same revision is readable by commit id and by branch name
     assert repo.data_at(cid) == datasets
     assert repo.data_at("main") == datasets
+
+
+def test_decoded_data_at_returns_public_dataset_and_keeps_raw_data(
+    fresh_repo_path: Path,
+) -> None:
+    """Decoded traversal is public while the canonical bytes remain available."""
+
+    class CurrentRecord(dx.Model):
+        id: str
+
+    cid = _commit_schema_and_data(fresh_repo_path, _RECORDS)
+    repo = dx.Repository.open(fresh_repo_path)
+
+    (raw,) = repo.data_at(cid)
+    (decoded,) = repo.decoded_data_at(cid)
+
+    assert isinstance(raw, dx.CommittedDataset)
+    assert isinstance(raw.data, bytes)
+    assert isinstance(decoded, dx.DecodedCommittedDataset)
+    assert decoded.schema_id == raw.schema_id
+    assert decoded.record_count == raw.record_count == 2
+    assert decoded.key == raw.key
+    assert decoded.records == [{"id": "a"}, {"id": "b"}]
+    validated: list[CurrentRecord] = []
+    for record in decoded.records:
+        assert isinstance(record, dict)
+        validated.append(CurrentRecord.model_validate(record))
+    assert [record.id for record in validated] == ["a", "b"]
+
+
+def test_decoded_data_at_preserves_mixed_schemas_values_and_order(
+    fresh_repo_path: Path,
+) -> None:
+    """One commit may decode datasets bound to distinct persisted schemas."""
+    repo = dx.Repository.init(fresh_repo_path)
+
+    repo.add(_build_minimal_schema("configuration"))
+    initial_config = fresh_repo_path / "initial-config.json"
+    initial_config.write_text('[{"id": "config-1"}]')
+    repo.add_data(initial_config, key="configuration")
+    first = repo.commit("configuration", author="Test <test@example.com>")
+    config_schema_id = repo.data_at(first)[0].schema_id
+
+    repo.add(_build_minimal_schema("record"))
+    initial_record = fresh_repo_path / "initial-record.json"
+    initial_record.write_text('[{"id": "record-1"}]')
+    repo.add_data(initial_record, key="record")
+    repo.commit("record", author="Test <test@example.com>")
+
+    # The first dataset explicitly reuses an older schema. The second uses the
+    # schema staged for this commit, without changing HEAD during staging.
+    repo.add(_build_minimal_schema("event"))
+    configuration_records = [
+        {
+            "name": "alpha",
+            "enabled": True,
+            "missing": None,
+            "retries": 3,
+            "ratio": 1.25,
+            "nested": {"labels": ["one", "two"], "empty": []},
+        },
+        {"name": "omega", "enabled": False, "retries": -1, "ratio": 0.0},
+    ]
+    event_records = [{"event": "start"}, {"event": "finish"}]
+    next_config = fresh_repo_path / "next-config.json"
+    next_config.write_text(json.dumps(configuration_records))
+    next_event = fresh_repo_path / "next-event.json"
+    next_event.write_text(json.dumps(event_records))
+
+    head_before = repo.head()
+    repo.add_data(
+        next_config,
+        key="configuration",
+        schema_id=config_schema_id,
+    )
+    repo.add_data(next_event, key="event")
+    assert repo.head() == head_before
+
+    mixed = repo.commit("configuration+event", author="Test <test@example.com>")
+    decoded = repo.decoded_data_at(mixed)
+    raw = repo.data_at(mixed)
+
+    assert [dataset.key for dataset in decoded] == ["configuration", "event"]
+    assert [dataset.records for dataset in decoded] == [
+        configuration_records,
+        event_records,
+    ]
+    assert [dataset.record_count for dataset in decoded] == [2, 2]
+    assert [dataset.schema_id for dataset in decoded] == [
+        config_schema_id,
+        raw[1].schema_id,
+    ]
+    assert decoded[0].schema_id != decoded[1].schema_id
+
+
+def test_decoded_data_at_accepts_history_refs_without_mutating_state(
+    fresh_repo_path: Path,
+) -> None:
+    """History reads accept every ref form and leave repository state alone."""
+    cid = _commit_schema_and_data(fresh_repo_path, _RECORDS)
+    repo = dx.Repository.open(fresh_repo_path)
+    repo.create_tag("snapshot", cid)
+    repo.create_branch("history", cid)
+
+    # Keep an unrelated schema staged while traversing history. Each lookup
+    # must leave both HEAD and the index untouched.
+    repo.add(_build_minimal_schema("pending"))
+    state_before = (repo.head(), repo.head_state(), repo.has_staged())
+    expected = repo.decoded_data_at(cid)
+
+    for ref in ("snapshot", "history", cid, cid[:12]):
+        assert repo.decoded_data_at(ref) == expected
+        assert (repo.head(), repo.head_state(), repo.has_staged()) == state_before
+
+
+def test_decoded_data_at_is_empty_without_committed_data(
+    fresh_repo_path: Path,
+) -> None:
+    repo, cid = _committed_repo(fresh_repo_path)
+    assert repo.decoded_data_at(cid) == []
+
+
+def test_decoded_data_at_unknown_ref_raises_typed_error(
+    fresh_repo_path: Path,
+) -> None:
+    repo, _ = _committed_repo(fresh_repo_path)
+    with pytest.raises(panproto.VcsError):
+        repo.decoded_data_at("not-a-ref")
+
+
+def test_decoded_data_at_missing_commit_object_raises_typed_error(
+    fresh_repo_path: Path,
+) -> None:
+    cid = _commit_schema_and_data(fresh_repo_path, _RECORDS)
+    repo = dx.Repository.open(fresh_repo_path)
+    commit_object = fresh_repo_path / ".panproto" / "objects" / cid[:2] / cid[2:]
+    commit_object.unlink()
+
+    with pytest.raises(panproto.VcsError):
+        repo.decoded_data_at("main")
+
+
+def test_decoded_data_at_tampered_dataset_raises_typed_error(
+    fresh_repo_path: Path,
+) -> None:
+    """Corrupt canonical data cannot escape as an untyped decoder failure."""
+    repo = dx.Repository.init(fresh_repo_path)
+    repo.add(_build_minimal_schema())
+    objects = fresh_repo_path / ".panproto" / "objects"
+    before_data = set(objects.glob("*/*"))
+
+    data_file = fresh_repo_path / "records.json"
+    data_file.write_bytes(_RECORDS)
+    repo.add_data(data_file, key="records")
+    after_data = set(objects.glob("*/*"))
+    (dataset_object,) = after_data - before_data
+    cid = repo.commit("schema+data", author="Test <test@example.com>")
+
+    stored = dataset_object.read_bytes()
+    dataset_object.write_bytes(stored[:-1] + bytes([stored[-1] ^ 0xFF]))
+
+    with pytest.raises(panproto.VcsError):
+        repo.decoded_data_at(cid)
 
 
 def test_add_data_stages_then_round_trips(fresh_repo_path: Path) -> None:

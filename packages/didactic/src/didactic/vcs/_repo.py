@@ -32,6 +32,7 @@ panproto.Repository : the wrapped runtime type.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
     import panproto
 
     from didactic.models._model import Model
-    from didactic.types._typing import JsonObject
+    from didactic.types._typing import JsonObject, JsonValue, Opaque
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,41 @@ class CommittedDataset:
 
     schema_id: str
     data: bytes
+    record_count: int
+    key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DecodedCommittedDataset:
+    """A decoded dataset as recorded at a committed revision.
+
+    Returned by
+    [decoded_data_at][didactic.api.Repository.decoded_data_at], one per
+    dataset committed at the requested revision. The records are ordinary
+    JSON-like Python values decoded by Panproto from its canonical storage
+    representation. A caller can thus pass each record to an explicit current
+    [Model][didactic.api.Model] without importing Panproto or implementing its
+    MessagePack codec.
+
+    Parameters
+    ----------
+    schema_id
+        Object id of the schema the dataset was validated against when it was
+        committed.
+    records
+        Decoded records in their committed order. Maps, lists, strings,
+        booleans, nulls, integers, and finite floats retain their JSON shapes.
+    record_count
+        Number of records in ``records`` as counted when the dataset was
+        committed.
+    key
+        Identifier recorded for the dataset. This has the same value as
+        [CommittedDataset.key][didactic.api.CommittedDataset] for the raw
+        representation at the same revision.
+    """
+
+    schema_id: str
+    records: list[JsonValue]
     record_count: int
     key: str | None = None
 
@@ -274,15 +310,9 @@ class Repository:
         Raises
         ------
         panproto.VcsError
-            If ``ref`` does not resolve to a commit, or returns ``None``.
+            If ``ref`` does not resolve to a commit.
         """
-        result = self._inner.resolve_ref(ref)
-        if result is None:
-            import panproto  # noqa: PLC0415
-
-            msg = f"ref {ref!r} did not resolve to a commit"
-            raise panproto.VcsError(msg)
-        return result
+        return self._inner.resolve_ref(ref)
 
     def data_at(self, ref: str) -> list[CommittedDataset]:
         """Read the datasets committed at ``ref``.
@@ -313,6 +343,39 @@ class Repository:
             If ``ref`` does not resolve to a revision.
         """
         return [_committed_dataset(ds) for ds in self._inner.data_at(ref)]
+
+    def decoded_data_at(self, ref: str) -> list[DecodedCommittedDataset]:
+        """Read and decode the datasets committed at ``ref``.
+
+        This is the decoded counterpart to
+        [data_at][didactic.api.Repository.data_at]. Panproto resolves the ref,
+        verifies and loads each stored dataset, and decodes its canonical
+        MessagePack records. The operation is read-only: it does not check out
+        the revision or change HEAD, the working tree, or the staged schema.
+
+        Parameters
+        ----------
+        ref
+            A branch name, tag name, ``HEAD``, full commit id, or accepted
+            commit-id prefix naming the revision to read.
+
+        Returns
+        -------
+        list of DecodedCommittedDataset
+            One entry per dataset committed at ``ref`` in recorded order, with
+            each entry's records in their committed order. Empty when the
+            revision committed no data.
+
+        Raises
+        ------
+        panproto.VcsError
+            If ``ref`` is missing or malformed, a referenced object is absent
+            or fails content verification, or canonical dataset data cannot be
+            decoded.
+        """
+        return [
+            _decoded_committed_dataset(ds) for ds in self._inner.decoded_data_at(ref)
+        ]
 
     def blame_field(self, ref: str, model: type[Model], field: str) -> Blame:
         """Find the commit that introduced a declared Model field.
@@ -687,6 +750,71 @@ def _committed_dataset(ds: dict[str, str | bytes | int | None]) -> CommittedData
     )
 
 
+def _decoded_committed_dataset(ds: JsonObject) -> DecodedCommittedDataset:
+    """Narrow one decoded Panproto dataset to the public result type.
+
+    The native binding guarantees this mapping shape. Treat a binding-contract
+    violation as a VCS failure as well, so malformed repository data never
+    escapes the public traversal operation as ``KeyError`` or ``AssertionError``.
+    """
+    import panproto  # noqa: PLC0415
+
+    try:
+        schema_id = ds["schema_id"]
+        records = ds["records"]
+        record_count = ds["record_count"]
+        key = ds["key"]
+    except KeyError as exc:
+        msg = f"decoded dataset is missing required field {exc.args[0]!r}"
+        raise panproto.VcsError(msg) from exc
+
+    if not isinstance(schema_id, str):
+        msg = "decoded dataset has a non-string schema_id"
+        raise panproto.VcsError(msg)
+    if not isinstance(records, list):
+        msg = "decoded dataset records are not a list"
+        raise panproto.VcsError(msg)
+    if not all(_is_json_value(record) for record in records):
+        msg = "decoded dataset contains a non-JSON or non-finite record value"
+        raise panproto.VcsError(msg)
+    if type(record_count) is not int:
+        msg = "decoded dataset has a non-integer record_count"
+        raise panproto.VcsError(msg)
+    if record_count != len(records):
+        msg = "decoded dataset record_count does not match its records"
+        raise panproto.VcsError(msg)
+    if key is not None and not isinstance(key, str):
+        msg = "decoded dataset has a key that is neither a string nor null"
+        raise panproto.VcsError(msg)
+
+    return DecodedCommittedDataset(
+        schema_id=schema_id,
+        records=cast("list[JsonValue]", records),
+        record_count=record_count,
+        key=key,
+    )
+
+
+def _is_json_value(value: Opaque) -> bool:
+    """Return whether ``value`` has Didactic's finite JSON value shape."""
+    if value is None or isinstance(value, str | bool):
+        return True
+    if type(value) is int:
+        return True
+    if isinstance(value, float):
+        return isfinite(value)
+    if isinstance(value, list):
+        values = cast("list[Opaque]", value)
+        return all(_is_json_value(item) for item in values)
+    if isinstance(value, dict):
+        mapping = cast("dict[Opaque, Opaque]", value)
+        return all(
+            isinstance(key, str) and _is_json_value(item)
+            for key, item in mapping.items()
+        )
+    return False
+
+
 def _blame(entry: JsonObject) -> Blame:
     """Narrow panproto's blame mapping to the public ``Blame`` record."""
     commit_id = entry["commit_id"]
@@ -708,5 +836,6 @@ def _blame(entry: JsonObject) -> Blame:
 __all__ = [
     "Blame",
     "CommittedDataset",
+    "DecodedCommittedDataset",
     "Repository",
 ]
