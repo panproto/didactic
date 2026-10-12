@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.6] - 2026-10-11
+
+### Added
+
+- `Repository.decoded_data_at(ref)` returns typed
+  `DecodedCommittedDataset` values with ordinary JSON-like records while
+  retaining each committed dataset's key, schema id, record count, and order.
+  History traversal accepts branches, tags, full commit ids, and commit-id
+  prefixes without changing HEAD or staged state; the raw canonical bytes from
+  `Repository.data_at(ref)` remain available. ([#83])
+
+[#83]: https://github.com/panproto/didactic/issues/83
+
 ## [0.17.5] - 2026-10-09
 
 ### Added
