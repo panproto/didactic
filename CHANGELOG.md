@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-16
+
+### Added
+
+- `didactic-settings` supports explicit list accumulation across composition
+  layers: `field+` appends and `+field` prepends in documents and dotted
+  overrides. Extensions retain schema checks, tagged-union descent,
+  interpolation, precedence order, schema defaults for unset lists, and
+  per-element provenance; a later wholesale write still replaces the list.
+  Selected fragments may now inherit sibling fragments through their own
+  cycle-checked `defaults` list. ([#85])
+
+[#85]: https://github.com/panproto/didactic/issues/85
+
 ## [0.17.6] - 2026-10-11
 
 ### Added
