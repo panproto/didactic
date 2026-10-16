@@ -96,7 +96,8 @@ def test_b_root_shared_field_without_tag_settles_to_default_variant(
     p = run.provenance
     assert p["optimizer.kind"].label == "default"
     assert p["optimizer.lr"].label == "file:run.yaml"
-    assert p["optimizer.betas"].label == "default"
+    assert p["optimizer.betas[0]"].label == "default"
+    assert p["optimizer.betas[1]"].label == "default"
 
 
 def test_b_variant_private_field_under_default_variant_is_refused_at_settle(
@@ -408,7 +409,7 @@ def test_f_dotted_override_descends_two_unions_deep(tmp_path: Path) -> None:
 # -- (g) unions as list elements -------------------------------------------------------
 
 
-def test_g_union_list_elements_are_checked_and_the_list_is_one_leaf(
+def test_g_union_list_elements_are_checked_and_attributed_per_element(
     tmp_path: Path,
 ) -> None:
     cfg = _write(
@@ -417,8 +418,8 @@ def test_g_union_list_elements_are_checked_and_the_list_is_one_leaf(
     )
     run = compose_traced(cfg, schema=RunSpec)
     assert run.value.encoders == (LstmEncoder(hidden=4), TransformerEncoder())
-    assert run.provenance["encoders"].label == "file:run.yaml"
-    assert not [p for p in run.provenance.paths if p.startswith("encoders[")]
+    assert run.provenance["encoders[0]"].label == "file:run.yaml"
+    assert run.provenance["encoders[1]"].label == "file:run.yaml"
 
 
 def test_g_unknown_key_inside_a_list_element_names_the_index(tmp_path: Path) -> None:
@@ -449,7 +450,7 @@ def test_g_list_replaces_wholesale_across_layers(tmp_path: Path) -> None:
     second = _write(tmp_path / "second.yaml", "encoders:\n  - kind: transformer\n")
     run = compose_traced(schema=RunSpec, overlays=[first, second])
     assert run.value.encoders == (TransformerEncoder(),)
-    assert run.provenance["encoders"].label == "overlay:second.yaml"
+    assert run.provenance["encoders[0]"].label == "overlay:second.yaml"
 
 
 # -- computed fields on a variant ------------------------------------------------------

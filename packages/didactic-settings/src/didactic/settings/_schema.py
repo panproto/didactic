@@ -106,7 +106,7 @@ class MapOf:
 
 @dataclass(frozen=True, slots=True)
 class ListOf:
-    """A ``tuple[T, ...]`` field: replaced wholesale, elements checked.
+    """A ``tuple[T, ...]`` field: elements checked on writes and extensions.
 
     Parameters
     ----------

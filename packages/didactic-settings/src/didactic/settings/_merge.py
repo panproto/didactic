@@ -4,8 +4,9 @@ One layer at a time, :func:`merge_layer` walks the layer's document and
 the schema side by side. Every key is checked against the model at that
 depth; a tagged-union node is checked against the variant its
 discriminator selects, and a node with no tag yet is checked against the
-fields the registered variants declare. Lists are set wholesale; map keys
-are data and their values merge under the map's value type; text from a
+fields the registered variants declare. Lists are set wholesale unless a
+key uses ``field+`` to append or ``+field`` to prepend; map keys are data
+and their values merge under the map's value type; text from a
 textual layer is decoded by the leaf's annotation at the moment it is
 written, and a value that arrives typed is checked against the annotation
 at the same moment. A string holding a ``${...}`` expression is written
@@ -26,7 +27,7 @@ import enum
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import NoneType, UnionType
-from typing import TYPE_CHECKING, Final, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Final, Literal, Union, cast, get_args, get_origin
 
 import didactic.api as dx
 from didactic.settings._errors import (
@@ -87,6 +88,9 @@ _NULL_TEXT: Final = frozenset({"", "null", "~"})
 
 type _Unknown = Callable[[str, KeyPath], ConfigError]
 """Builds the error for a key the node's field table does not hold."""
+
+type _ListOp = Literal["append", "prepend"]
+"""An explicit list-extension operation encoded in a document key."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +210,7 @@ def _merge_model(
     ignore = model.__model_config__.extra == "ignore"
     refuse = unknown or _plain_unknown(model, ctx)
     for key, value in overlay.items():
-        spec = table.get(key)
+        spec, operation = _field_operation(key, table)
         if spec is None:
             if key in dropped:
                 if _refuses_computed(ctx):
@@ -216,9 +220,20 @@ def _merge_model(
                 continue
             raise refuse(key, (*path, key))
         sub = (*path, spec.name)
-        result[spec.name] = _merge_value(
-            result.get(spec.name), value, target=target_of(spec), path=sub, ctx=ctx
-        )
+        target = target_of(spec)
+        if operation is None:
+            result[spec.name] = _merge_value(
+                result.get(spec.name), value, target=target, path=sub, ctx=ctx
+            )
+        else:
+            result[spec.name] = _extend_list(
+                result.get(spec.name, _MISSING),
+                value,
+                target=target,
+                path=sub,
+                ctx=ctx,
+                operation=operation,
+            )
     return result
 
 
@@ -314,18 +329,117 @@ def _merge_list(
     ``None`` (or null text under a textual layer) is accepted at an
     optional list slot and refused elsewhere.
     """
-    if isinstance(value, str):
-        if is_whole_expression(value):
-            stamp(ctx.prov, path, value, ctx.origin)
-            return value
-        if ctx.textual:
-            value = decode_text(
-                value, target.annotation, path=dotted(path), origin=ctx.origin
-            )
-    if value is None:
+    if isinstance(value, str) and is_whole_expression(value):
+        stamp(ctx.prov, path, value, ctx.origin)
+        return value
+    checked = _checked_list(value, target=target, path=path, ctx=ctx)
+    if checked is None:
         if not target.optional:
             raise _wrong_shape(target, path, ctx, "null")
         stamp(ctx.prov, path, None, ctx.origin)
+        return None
+    stamp(ctx.prov, path, checked, ctx.origin)
+    return checked
+
+
+def _field_operation(
+    key: str, table: Mapping[str, dx.FieldSpec]
+) -> tuple[dx.FieldSpec | None, _ListOp | None]:
+    """Resolve an exact field key or its append/prepend spelling.
+
+    Exact names and aliases win, so a schema may legitimately declare a
+    field whose name starts or ends with ``+``. Only an otherwise unknown
+    key is interpreted as an operation.
+    """
+    field_key, operation = _operation_key(key, table)
+    spec = table.get(field_key)
+    if spec is not None:
+        return spec, operation
+    return None, None
+
+
+def _operation_key(key: str, table: Mapping[str, object]) -> tuple[str, _ListOp | None]:
+    """Return the underlying field key and an optional list operation."""
+    if key in table:
+        return key, None
+    if key.endswith("+") and key[:-1]:
+        candidate = key[:-1]
+        if candidate in table:
+            return candidate, "append"
+    if key.startswith("+") and key[1:]:
+        candidate = key[1:]
+        if candidate in table:
+            return candidate, "prepend"
+    return key, None
+
+
+def _extend_list(
+    existing: ConfigValue | _Missing,
+    value: ConfigValue,
+    *,
+    target: Target,
+    path: KeyPath,
+    ctx: _Ctx,
+    operation: _ListOp,
+) -> list[ConfigValue]:
+    """Apply one explicit append or prepend under a list target."""
+    if not isinstance(target, ListOf):
+        where = dotted(path)
+        msg = (
+            f"Config key {where!r} is not a list and cannot be {operation}ed "
+            f"{ctx.label(path)}"
+        )
+        raise ConfigError(msg, path=where)
+    if isinstance(value, str) and is_whole_expression(value):
+        where = dotted(path)
+        msg = (
+            f"List extension at {where!r} {ctx.label(path)} must supply a list; "
+            "a whole-list interpolation cannot determine element boundaries"
+        )
+        raise ConfigError(msg, path=where)
+    incoming = _checked_list(value, target=target, path=path, ctx=ctx)
+    if incoming is None:
+        raise _wrong_shape(target, path, ctx, "null")
+
+    if isinstance(existing, _Missing):
+        base = _list_default(target)
+        stamp(ctx.prov, path, base, Origin("default"))
+    elif existing is None:
+        base = []
+    elif isinstance(existing, list | tuple):
+        base = list(existing)
+    else:
+        where = dotted(path)
+        prior = origin_under(ctx.prov, path)
+        set_by = f" (set by {prior.label})" if prior is not None else ""
+        msg = (
+            f"Config key {where!r} cannot be {operation}ed because its current "
+            f"value is {_kind(existing)}{set_by}; write the list wholesale first"
+        )
+        raise ConfigError(msg, path=where)
+
+    if operation == "prepend":
+        _shift_list_origins(ctx.prov, path, len(incoming))
+        start = 0
+        merged = [*incoming, *base]
+    else:
+        start = len(base)
+        merged = [*base, *incoming]
+    ctx.prov.pop(path, None)
+    for index in range(start, start + len(incoming)):
+        ctx.prov[(*path, f"[{index}]")] = ctx.origin
+    return merged
+
+
+def _checked_list(
+    value: ConfigValue, *, target: ListOf, path: KeyPath, ctx: _Ctx
+) -> list[ConfigValue] | None:
+    """Decode and type-check a list value without writing provenance."""
+    if isinstance(value, str) and ctx.textual:
+        value = decode_text(
+            value, target.annotation, path=dotted(path), origin=ctx.origin
+        )
+    if value is None:
         return None
     if isinstance(value, tuple):
         value = list(value)
@@ -336,20 +450,53 @@ def _merge_list(
         check_value(
             checked, target.annotation, path=dotted(path), origin=ctx.set_by(path)
         )
-    else:
-        scratch = replace(ctx, prov={})
-        checked = [
-            _merge_value(
-                None,
-                element,
-                target=target.inner,
-                path=(*path, f"[{index}]"),
-                ctx=scratch,
-            )
-            for index, element in enumerate(value)
-        ]
-    stamp(ctx.prov, path, checked, ctx.origin)
-    return checked
+        return checked
+    scratch = replace(ctx, prov={})
+    return [
+        _merge_value(
+            None,
+            element,
+            target=target.inner,
+            path=(*path, f"[{index}]"),
+            ctx=scratch,
+        )
+        for index, element in enumerate(value)
+    ]
+
+
+def _list_default(target: ListOf) -> list[ConfigValue]:
+    """Return an unset field's list default, or an empty list."""
+    spec = target.spec
+    if spec is None or spec.is_required:
+        return []
+    default = shape_default(spec.make_default())
+    return list(default) if isinstance(default, list) else []
+
+
+def _shift_list_origins(
+    record: dict[KeyPath, Origin], path: KeyPath, amount: int
+) -> None:
+    """Shift recorded list indices right before a prepend."""
+    if amount == 0:
+        return
+    depth = len(path)
+    moved: list[tuple[KeyPath, KeyPath, Origin]] = []
+    for recorded, origin in list(record.items()):
+        if recorded[:depth] != path or len(recorded) == depth:
+            continue
+        segment = recorded[depth]
+        if not (segment.startswith("[") and segment.endswith("]")):
+            continue
+        try:
+            index = int(segment[1:-1])
+        except ValueError:
+            continue
+        shifted = (*path, f"[{index + amount}]", *recorded[depth + 1 :])
+        moved.append((recorded, shifted, origin))
+    for old, _, _ in moved:
+        record.pop(old, None)
+    for _, new, origin in moved:
+        record[new] = origin
 
 
 def _merge_union(
@@ -507,7 +654,9 @@ def _merge_provisional(
     for variant in variants.values():
         dropped |= accepted_and_dropped(variant)
     ignore = root.__model_config__.extra == "ignore"
-    for key, value in overlay.items():
+    known = {**root_table, **declared}
+    for raw_key, value in overlay.items():
+        key, operation = _operation_key(raw_key, known)
         owners = declared.get(key)
         root_spec = root_table.get(key)
         if owners:
@@ -544,9 +693,20 @@ def _merge_provisional(
         else:
             raise _no_variant_declares(root, (*path, key), ctx.set_by((*path, key)))
         sub = (*path, spec.name)
-        result[spec.name] = _merge_value(
-            result.get(spec.name), value, target=target_of(spec), path=sub, ctx=ctx
-        )
+        target = target_of(spec)
+        if operation is None:
+            result[spec.name] = _merge_value(
+                result.get(spec.name), value, target=target, path=sub, ctx=ctx
+            )
+        else:
+            result[spec.name] = _extend_list(
+                result.get(spec.name, _MISSING),
+                value,
+                target=target,
+                path=sub,
+                ctx=ctx,
+                operation=operation,
+            )
     return result
 
 

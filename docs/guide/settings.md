@@ -221,11 +221,12 @@ root holding a name wins, and a name without a suffix tries `.yaml`, `.yml`,
 `.toml` and `.json` in that order. Within one root, two files sharing a stem
 with different suffixes are refused as ambiguous.
 
-The `defaults` key of the primary file is always the selection list, even
-when the schema declares a field of that name; such a field can be set from
-any other layer. In an overlay, a profile, a fragment or a `FileSource`,
-`defaults` is an ordinary key, so a schema that does not declare it refuses
-it as unknown.
+The `defaults` key of the primary file and of a selected fragment is always a
+selection list, even when the schema declares a field of that name. A bare
+entry in a fragment names a sibling and inherits the fragment's mount point,
+so a group fragment can refine another fragment in the same group. Its
+defaults merge before its own body; a cycle is a `ConfigError`. In an overlay,
+a profile or a `FileSource`, `defaults` is an ordinary schema key.
 
 ## Config groups
 
@@ -297,6 +298,59 @@ except MissingFragmentError as error:
     assert error.available == ("lstm", "transformer")
     assert len(error.tried) == 4
 ```
+
+## Extending lists across layers
+
+A normal list write replaces the lower-precedence list. Append a sequence with
+the `field+` key and prepend one with `+field`; the same spellings work at any
+nested schema path and in dotted overrides. Extension is explicit per write,
+so a later wholesale `field` write still replaces the accumulated list.
+
+```yaml
+# rules/application.yaml
+tags: [application-forward, application-backward]
+```
+
+```yaml
+# rules/plus-composition.yaml
+defaults: [application]
+tags+: [composition-forward]
+```
+
+```yaml
+# rules.yaml
+defaults: [rules/plus-composition]
+```
+
+```python
+run = compose(
+    conf / "rules.yaml",
+    schema=RunSpec,
+    profile={"tags+": ["composition-backward"]},
+    overrides=['tags+=["type-raising"]'],
+)
+assert run.tags == (
+    "application-forward",
+    "application-backward",
+    "composition-forward",
+    "composition-backward",
+    "type-raising",
+)
+```
+
+Each extension value must be a list. The engine checks every incoming element
+against the declared element type immediately, including discriminator-based
+descent for tagged-union elements, and a directive aimed at a non-list field is
+a `ConfigError` naming the canonical field path and layer. Interpolation inside
+an incoming element follows the usual rules. A whole-list interpolation cannot
+serve as an extension because its element boundaries are unknown until after
+the merge.
+
+Extending a field that no layer has set starts with its schema default; if the
+field is required or its optional default is `None`, it starts empty. Extending
+an explicitly cleared optional list also starts empty. Lower layers accumulate
+first. Thus append preserves precedence order, while prepend places the higher
+layer's elements before the accumulated values.
 
 ## Profiles and overlays
 
@@ -691,7 +745,8 @@ assert p["trainer.epochs"].label == "profile:dev"
 assert p["paths.data_dir"].label == "defaults:paths"
 assert p["optimizer.lr"].label == "override:optimizer.lr=0.1"
 assert p["optimizer.kind"] == Origin("default")
-assert p["optimizer.betas"].label == "default"
+assert p["optimizer.betas[0]"].label == "default"
+assert p["optimizer.betas[1]"].label == "default"
 
 out_dir = p["trainer.out_dir"]
 assert out_dir.kind == "file" and out_dir.name == "run.yaml"
@@ -710,25 +765,26 @@ assert [layer.origin.label for layer in run.layers] == [
 ```
 
 The record covers exactly the leaves of `value.model_dump_json()`. A leaf is a
-scalar or `None`, a whole list, an empty mapping, or any leaf reached by
-descending a non-empty mapping; so every key of a `dict[str, str]` map, every
-field of a nested model or selected variant, and every entry of a
-`dict[str, Model]` map contributes its own leaves, and partial overlays from
-two files keep per-leaf attribution. After validation, every leaf no layer
-wrote (a variant default, an optional left `None`, an untouched nested model's
+scalar or `None`, an empty container, any leaf reached by descending a
+non-empty mapping, or one element of a non-empty list. List elements use
+bracketed paths such as `tags[0]` and remain one provenance leaf even when an
+element is a model-shaped mapping. Thus extensions retain the contributing
+layer for each element, while a wholesale write replaces those origins. Every
+key of a `dict[str, str]` map, every field of a nested model or selected
+variant, and every entry of a `dict[str, Model]` map also contributes its own
+leaves, and partial overlays from two files keep per-leaf attribution. After
+validation, every leaf no layer wrote (a variant default, an optional left
+`None`, an untouched nested model's
 fields, a computed field present in the dump) is labelled `default`, and a
 recorded path that is no longer a leaf of the dump (a value a validator
 reshaped) is dropped. An interpolated leaf keeps the layer that wrote the
 expression and gains the expression itself; values a resolver pulled from
 elsewhere do not transfer their origin.
 
-Three limits follow from the leaf definition. A list is one leaf: the
-elements of a `tuple[T, ...]` field are checked against the schema and set
-wholesale by the layer that wrote the list last, so attribution stops at the
-list boundary and an element's origin is never recorded on its own. Map keys
-are recorded verbatim as path segments, so a key containing `.` makes its
-path ambiguous. And a computed field, or a value a validator reshaped, is
-labelled `default` even though a layer contributed to it.
+Two limits follow from the leaf definition. Map keys are recorded verbatim as
+path segments, so a key containing `.` makes its path ambiguous. And a
+computed field, or a value a validator reshaped, is labelled `default` even
+though a layer contributed to it.
 
 The read API covers the common questions: `paths` lists the leaves,
 `source_of(path)` raises `ConfigError` listing the leaves when the path is not
@@ -741,7 +797,8 @@ import json
 
 assert p.by_layer()["profile:dev"] == ("trainer.epochs",)
 assert set(p.under("optimizer").paths) == {
-    "optimizer.betas",
+    "optimizer.betas[0]",
+    "optimizer.betas[1]",
     "optimizer.kind",
     "optimizer.lr",
 }

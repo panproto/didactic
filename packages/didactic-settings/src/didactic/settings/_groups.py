@@ -8,11 +8,14 @@ slot, not a wrapper: ``model/type_encoder/transformer.yaml`` contains
 ``kind: transformer`` and ``num_heads: 8``, and the engine mounts it
 under ``model.type_encoder`` before merging.
 
-Three spellings feed one ordered selection table keyed by slot: the
-primary file's ``defaults:`` list, the ``groups=`` argument, and override
+Three spellings feed one ordered selection table keyed by slot: a file's
+``defaults:`` list, the ``groups=`` argument, and override
 strings whose key contains ``/``. A later selection for a slot already in
 the table replaces it in place; the whole table is merged, in table
 order, above ``base`` and below the primary file body.
+
+A selected fragment may itself carry ``defaults``. Its dependencies merge
+first; a bare entry names a sibling and inherits the fragment's mount point.
 """
 
 from __future__ import annotations
@@ -283,11 +286,11 @@ def find_group_fragment(slot: str, name: str, *, roots: Sequence[Path]) -> Path:
 def load_fragment(selection: Selection, *, roots: Sequence[Path]) -> Layer | None:
     """Load the document a selection names and mount it as a layer.
 
-    Returns ``None`` for a slot recorded with no selection. A root-mounted
-    entry's document is the layer as loaded; a slot selection's document
-    is wrapped under the slot path, so the merge refuses unknown keys in
-    the fragment with the full dotted path and reads its discriminator at
-    the slot.
+    Returns ``None`` for a slot recorded with no selection. This compatibility
+    helper returns the selected fragment's own layer; use
+    :func:`load_fragment_layers` when its nested defaults are needed. A
+    root-mounted entry's document is the layer as loaded; a slot selection's
+    document is wrapped under the slot path.
 
     Raises
     ------
@@ -297,8 +300,25 @@ def load_fragment(selection: Selection, *, roots: Sequence[Path]) -> Layer | Non
     MissingFragmentError
         When no root holds the fragment.
     """
+    layers = load_fragment_layers(selection, roots=roots)
+    return layers[-1] if layers else None
+
+
+def load_fragment_layers(
+    selection: Selection,
+    *,
+    roots: Sequence[Path],
+    _stack: tuple[Path, ...] = (),
+) -> list[Layer]:
+    """Load a fragment and the fragments in its own ``defaults`` list.
+
+    A bare nested entry names a sibling file and inherits the containing
+    fragment's mount point. Thus a group fragment may refine another
+    fragment in the same group, while a root fragment may refine another
+    root fragment. Nested defaults merge first and cycles are refused.
+    """
     if selection.name is None:
-        return None
+        return []
     if selection.slot is None:
         if not roots:
             msg = (
@@ -307,12 +327,61 @@ def load_fragment(selection: Selection, *, roots: Sequence[Path]) -> Layer | Non
             )
             raise ConfigError(msg)
         file = find_fragment(selection.name, roots=roots)
-        document: dict[str, ConfigValue] = load_document(file)
     else:
         file = find_group_fragment(selection.slot, selection.name, roots=roots)
-        document = nest_override(selection.slot, load_document(file))
+    return _load_fragment_file(selection, file=file, roots=roots, stack=_stack)
+
+
+def _load_fragment_file(
+    selection: Selection,
+    *,
+    file: Path,
+    roots: Sequence[Path],
+    stack: tuple[Path, ...],
+) -> list[Layer]:
+    """Load one already resolved fragment, recursively, lowest first."""
+    resolved = file.resolve()
+    if resolved in stack:
+        cycle = (*stack[stack.index(resolved) :], resolved)
+        msg = "Config fragment defaults cycle: " + " -> ".join(
+            str(path) for path in cycle
+        )
+        raise ConfigError(msg)
+    document = load_document(file)
+    defaults = document.pop("defaults", None)
+    nested_roots = tuple(dict.fromkeys((file.parent, *roots)))
+    nested = selection_table(defaults, None, (), primary=file)
+    layers: list[Layer] = []
+    for child in nested:
+        if child.slot is None and child.name is not None:
+            child_file = find_fragment(child.name, roots=nested_roots)
+            if selection.slot is None:
+                child_origin = child.origin
+            else:
+                child_origin = Origin("group", name=f"{selection.slot}={child.name}")
+            inherited = Selection(
+                slot=selection.slot, name=child.name, origin=child_origin
+            )
+            layers.extend(
+                _load_fragment_file(
+                    inherited,
+                    file=child_file,
+                    roots=nested_roots,
+                    stack=(*stack, resolved),
+                )
+            )
+        else:
+            layers.extend(
+                load_fragment_layers(
+                    child, roots=nested_roots, _stack=(*stack, resolved)
+                )
+            )
+    mounted = (
+        document if selection.slot is None else nest_override(selection.slot, document)
+    )
     origin = Origin(selection.origin.kind, name=selection.origin.name, path=str(file))
-    return Layer(origin=origin, document=document)
+    layers.append(Layer(origin=origin, document=mounted))
+    return layers
 
 
 __all__ = [
@@ -323,6 +392,7 @@ __all__ = [
     "is_group_override",
     "list_names",
     "load_fragment",
+    "load_fragment_layers",
     "normalise_slot",
     "search_roots",
     "selection_table",

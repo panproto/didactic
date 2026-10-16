@@ -94,8 +94,9 @@ def parse_override(expr: str) -> tuple[str, str]:
     """Split a ``key=value`` override into its key and raw value text.
 
     The key is validated: it must be non-empty, every dotted segment must
-    be non-empty, and no segment may be an integer (lists are set whole,
-    as ``tags=[...]``). The value text is returned untouched; the leaf
+    be non-empty, and no segment may be an integer (lists cannot be indexed;
+    write ``tags=[...]`` or extend with ``tags+=[...]``). The value text is
+    returned untouched; the leaf
     annotation decides how it is read.
 
     Raises
@@ -119,7 +120,7 @@ def validate_override_key(key: str) -> None:
     """Check a dotted override key.
 
     Every segment must be non-empty and no segment may be an integer,
-    since lists are set whole rather than indexed into.
+    since lists are written or extended as units rather than indexed into.
 
     Raises
     ------
@@ -138,7 +139,8 @@ def validate_override_key(key: str) -> None:
             head = ".".join(segments[:index])
             msg = (
                 f"Override key {key!r} indexes into a list; "
-                f"lists are set whole, as {head}=[...]"
+                f"lists cannot be indexed; write {head}=[...] or extend "
+                f"with {head}+=[...]"
             )
             raise OverrideSyntaxError(msg)
 
