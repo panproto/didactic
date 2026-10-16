@@ -130,7 +130,8 @@ def test_worked_example_composes_and_traces(
     assert p["trainer.log_dir"].label == "default"
     assert p["optimizer.kind"].label == "default"
     assert p["optimizer.lr"].label == "override:optimizer.lr=0.1"
-    assert p["optimizer.betas"].label == "override:optimizer.betas=[0.8, 0.95]"
+    assert p["optimizer.betas[0]"].label == "override:optimizer.betas=[0.8, 0.95]"
+    assert p["optimizer.betas[1]"].label == "override:optimizer.betas=[0.8, 0.95]"
     assert p["paths.data_dir"].label == "defaults:paths"
     assert set(p.paths) == {
         "model.type_encoder.kind",
@@ -145,7 +146,8 @@ def test_worked_example_composes_and_traces(
         "model.combinator_decoders.bwd.bias",
         "optimizer.kind",
         "optimizer.lr",
-        "optimizer.betas",
+        "optimizer.betas[0]",
+        "optimizer.betas[1]",
         "trainer.epochs",
         "trainer.out_dir",
         "trainer.log_dir",
@@ -324,18 +326,25 @@ def test_unknown_key_in_a_fragment_is_refused_with_the_full_path(conf: Path) -> 
     assert "(set by group:model.type_encoder=bad)" in str(e)
 
 
-def test_fragment_carrying_defaults_is_refused_as_an_unknown_key(conf: Path) -> None:
+def test_group_fragment_may_inherit_a_sibling_fragment(conf: Path) -> None:
+    _write(
+        conf / "model" / "type_encoder" / "other.yaml",
+        "kind: lstm\nhidden: 256\n",
+    )
     _write(
         conf / "model" / "type_encoder" / "nested.yaml",
-        "defaults:\n  - other\nkind: lstm\n",
+        "defaults:\n  - other\ndropout: 0.25\n",
     )
-    with pytest.raises(UnknownKeyError) as info:
-        compose(
-            conf / "run.yaml", schema=RunSpec, groups={"model.type_encoder": "nested"}
-        )
-    assert info.value.path == "model.type_encoder.defaults"
-    assert info.value.set_by is not None
-    assert info.value.set_by.label == "group:model.type_encoder=nested"
+    run = compose_traced(
+        conf / "run.yaml", schema=RunSpec, groups={"model.type_encoder": "nested"}
+    )
+    assert run.value.model.type_encoder == LstmEncoder(hidden=256, dropout=0.25)
+    assert run.provenance["model.type_encoder.hidden"].label == (
+        "group:model.type_encoder=other"
+    )
+    assert run.provenance["model.type_encoder.dropout"].label == (
+        "group:model.type_encoder=nested"
+    )
 
 
 def test_toml_and_json_fragments_are_supported(conf: Path) -> None:
@@ -599,7 +608,8 @@ def test_defaults_in_the_primary_file_is_always_the_selection_list(
         cfg, schema=_WithDefaultsField, overrides=['defaults=["x", "y"]']
     )
     assert run2.value.defaults == ("x", "y")
-    assert run2.provenance["defaults"].label == 'override:defaults=["x", "y"]'
+    assert run2.provenance["defaults[0]"].label == 'override:defaults=["x", "y"]'
+    assert run2.provenance["defaults[1]"].label == 'override:defaults=["x", "y"]'
 
 
 def test_defaults_in_an_overlay_is_an_ordinary_key(tmp_path: Path) -> None:
@@ -607,7 +617,7 @@ def test_defaults_in_an_overlay_is_an_ordinary_key(tmp_path: Path) -> None:
     overlay = _write(tmp_path / "overlay.yaml", "defaults:\n  - z\n")
     run = compose_traced(schema=_WithDefaultsField, overlays=[overlay])
     assert run.value.defaults == ("z",)
-    assert run.provenance["defaults"].label == "overlay:overlay.yaml"
+    assert run.provenance["defaults[0]"].label == "overlay:overlay.yaml"
     # for a schema that does not, it is refused as unknown
     with pytest.raises(UnknownKeyError) as info:
         compose(schema=RunSpec, overlays=[overlay])

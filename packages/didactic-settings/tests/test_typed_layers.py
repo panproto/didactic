@@ -350,12 +350,21 @@ def test_expression_at_a_non_str_leaf_from_an_override_string(
     monkeypatch.setenv("EXPR_FLAG", "yes")
     run = compose_traced(schema=Exprs, overrides=[override])
     assert getattr(run.value.t, field) == expected
-    origin = run.provenance[f"t.{field}"]
-    assert origin.label == f"override:{override}"
     text = override.partition("=")[2]
-    # a comma-split list records the decoded list, in JSON
-    recorded = {"1,${seed}": '[1, "${seed}"]', "${seed},b": '["${seed}", "b"]'}
-    assert origin.expression == recorded.get(text, text)
+    if isinstance(expected, tuple):
+        origins = run.provenance.under(f"t.{field}")
+        assert {origin.label for origin in origins.values()} == {f"override:{override}"}
+        expressions = tuple(origin.expression for origin in origins.values())
+        if text.startswith("${oc.create:"):
+            assert expressions == (text, text)
+        elif text == "1,${seed}":
+            assert expressions == (None, "${seed}")
+        else:
+            assert expressions == ("${seed}", None)
+    else:
+        origin = run.provenance[f"t.{field}"]
+        assert origin.label == f"override:{override}"
+        assert origin.expression == text
 
 
 def test_expression_at_a_non_str_leaf_from_the_environment(
@@ -370,7 +379,8 @@ def test_expression_at_a_non_str_leaf_from_the_environment(
     assert app.value.t == Leafy(n=9, f=7.0, b=True, lst=(1, 2))
     assert app.provenance["t.n"].label == "source:env"
     assert app.provenance["t.n"].expression == "${oc.env:EXPR_N}"
-    assert app.provenance["t.lst"].expression == "${oc.create:[1,2]}"
+    assert app.provenance["t.lst[0]"].expression == "${oc.create:[1,2]}"
+    assert app.provenance["t.lst[1]"].expression == "${oc.create:[1,2]}"
 
 
 def test_resolved_text_that_does_not_fit_is_refused_with_the_expression(
@@ -391,7 +401,8 @@ def test_list_resolver_fills_a_tuple_leaf_from_a_mapping() -> None:
         base={"paths": {"a": "1", "b": "2"}, "t": {"words": "${oc.dict.keys:paths}"}},
     )
     assert run.value.t.words == ("a", "b")
-    assert run.provenance["t.words"].expression == "${oc.dict.keys:paths}"
+    assert run.provenance["t.words[0]"].expression == "${oc.dict.keys:paths}"
+    assert run.provenance["t.words[1]"].expression == "${oc.dict.keys:paths}"
     values = compose(
         schema=Exprs,
         base={"paths": {"a": "1"}, "t": {"words": "${oc.dict.values:paths}"}},

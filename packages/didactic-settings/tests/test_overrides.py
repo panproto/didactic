@@ -58,7 +58,8 @@ def test_parse_override_list_index_is_refused() -> None:
     with pytest.raises(OverrideSyntaxError) as info:
         parse_override("tags.0=x")
     assert str(info.value) == (
-        "Override key 'tags.0' indexes into a list; lists are set whole, as tags=[...]"
+        "Override key 'tags.0' indexes into a list; lists cannot be indexed; "
+        "write tags=[...] or extend with tags+=[...]"
     )
     with pytest.raises(OverrideSyntaxError, match="indexes into a list"):
         validate_override_key("a.b.12.c")

@@ -2,9 +2,9 @@
 
 The record covers exactly the leaves of ``value.model_dump_json()``; every
 leaf names the layer that wrote it, or ``default`` when no layer did. The
-leaf definition used here is the one LoFI's conformance helper uses: a
-non-empty dict descends, an empty dict is a leaf, a list is a leaf, and
-every scalar and ``None`` is a leaf.
+leaf definition used here is the engine's public provenance contract: a
+non-empty dict descends, every element of a non-empty list is a leaf, and
+an empty container, every scalar and ``None`` are leaves.
 
 This module deliberately omits ``from __future__ import annotations``;
 see ``_schemas.py``.
@@ -47,6 +47,10 @@ def _leaves(node: _Json, path: tuple[str, ...] = ()) -> Iterator[tuple[str, _Jso
     if isinstance(node, dict) and node:
         for key, child in node.items():
             yield from _leaves(child, (*path, key))
+    elif isinstance(node, list) and node:
+        prefix = ".".join(path)
+        for index, child in enumerate(node):
+            yield f"{prefix}[{index}]", child
     else:
         yield ".".join(path), node
 
@@ -85,7 +89,7 @@ def test_provenance_covers_exactly_the_leaves_of_the_dump(tmp_path: Path) -> Non
     assert set(run.provenance.paths) == {path for path, _ in _leaves(dumped)}
     assert run.provenance["paths.data_dir"].label == "file:run.yaml"
     assert run.provenance["paths.cache"].label == "file:run.yaml"
-    assert run.provenance["encoders"].label == "file:run.yaml"
+    assert run.provenance["encoders[0]"].label == "file:run.yaml"
     assert (
         run.provenance["model.combinator_decoders.bwd.hidden"].label == "file:run.yaml"
     )
@@ -546,7 +550,7 @@ def test_unions_in_every_position_are_covered(tmp_path: Path) -> None:
     assert run.provenance["one.kind"].label == "default"
     assert run.provenance["maybe.shared"].label == "overlay:#0"
     assert run.provenance["maybe.own"].label == "default"
-    assert run.provenance["many"].label == "overlay:#0"
+    assert run.provenance["many[0]"].label == "overlay:#0"
     assert run.provenance["table.k.own"].label == "overlay:#0"
     assert run.provenance["table.k.shared"].label == "default"
     assert run.value.one == V()

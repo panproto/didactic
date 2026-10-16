@@ -6,11 +6,10 @@ it sets will carry; a :class:`Provenance` is the finished record, one
 origin per leaf of the validated model.
 
 The leaf definition is the one :func:`~didactic.settings._values.leaves`
-implements: a scalar or ``None``, a whole list, an empty dict, and every
-leaf reached by descending a non-empty dict. A list is one leaf because
-``tuple[T, ...]`` fields are set wholesale by whichever layer wrote them
-last; elements are checked against the schema but not attributed
-individually, so provenance stops at the list boundary.
+implements: a scalar or ``None``, an empty container, every leaf reached
+by descending a non-empty dict, and each element of a non-empty list.
+List elements are attributed individually because different layers may
+append or prepend them.
 """
 
 from __future__ import annotations
@@ -112,10 +111,9 @@ class Provenance(Mapping[str, Origin]):
     compositions from the same layers give equal records. It covers
     exactly the leaves of ``value.model_dump_json()``: every leaf no layer
     wrote is labelled ``default``. Map keys are recorded verbatim as path
-    segments, so a key containing ``.`` makes its path ambiguous. A list
-    is one leaf: the elements of a ``tuple[T, ...]`` field are checked
-    against the schema but not attributed individually, so the record
-    stops at the list boundary.
+    segments, so a key containing ``.`` makes its path ambiguous. Elements
+    of a non-empty list are addressed with brackets (``rules[0]``); an
+    empty list is recorded at the list field itself.
     """
 
     __slots__ = ("_entries",)
@@ -162,7 +160,7 @@ class Provenance(Mapping[str, Origin]):
             {
                 path: origin
                 for path, origin in self._entries.items()
-                if path == prefix or path.startswith(prefix + ".")
+                if path == prefix or path.startswith((prefix + ".", prefix + "["))
             }
         )
 
@@ -220,8 +218,8 @@ def stamp(
     Every entry at or under ``path`` is dropped, and so is every entry at
     a strict ancestor of ``path`` (a node written wholesale, or created
     empty, before a leaf below it was written); then one entry is written
-    per leaf of ``value`` when it is a non-empty mapping, else one entry
-    at ``path``.
+    per leaf of ``value`` when it is a non-empty mapping or list, else one
+    entry at ``path``.
     """
     prune(record, path)
     for cut in range(len(path) - 1, 0, -1):
@@ -229,6 +227,9 @@ def stamp(
     if isinstance(value, Mapping) and value:
         for leaf_path, _ in leaves(value, path):
             record[leaf_path] = origin
+    elif isinstance(value, list) and value:
+        for index, _ in enumerate(value):
+            record[(*path, f"[{index}]")] = origin
     else:
         record[path] = origin
 

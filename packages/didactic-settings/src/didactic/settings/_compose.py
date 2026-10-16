@@ -37,7 +37,7 @@ from uuid import UUID
 from didactic.settings._documents import find_profile, load_document
 from didactic.settings._errors import ConfigError
 from didactic.settings._groups import (
-    load_fragment,
+    load_fragment_layers,
     search_roots,
     selection_table,
     split_overrides,
@@ -218,9 +218,7 @@ def assemble_layers(
     selections, field_overrides = split_overrides(overrides)
     table = selection_table(defaults, groups, selections, primary=primary)
     for selection in table:
-        fragment = load_fragment(selection, roots=roots)
-        if fragment is not None:
-            layers.append(fragment)
+        layers.extend(load_fragment_layers(selection, roots=roots))
     if primary is not None:
         origin = Origin("file", name=primary.name, path=str(primary))
         layers.append(Layer(origin=origin, document=document))

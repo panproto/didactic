@@ -587,17 +587,16 @@ def resolve_traced(
     Returns
     -------
     tuple
-        The resolved document, and ``{path: text}`` for every dict-keyed
-        leaf whose source text contained ``${``: the string itself for a
-        string leaf, the JSON rendering of the list as written for a list
-        leaf any of whose elements contained ``${``.
+        The resolved document, and ``{path: text}`` for every leaf whose
+        source contained ``${``: the string itself for a string leaf, or
+        the JSON rendering of a list element written as a container.
     """
     expressions: dict[KeyPath, str] = {}
     for path, value in leaves(document):
         if isinstance(value, str):
             if mentions_expression(value):
                 expressions[path] = value
-        elif isinstance(value, list) and mentions_expression(value):
+        elif mentions_expression(value):
             expressions[path] = json.dumps(value)
     state = _EvalState(
         root=document if root is None else root, resolvers=resolvers or {}

@@ -50,16 +50,20 @@ def leaves(
 ) -> Iterator[tuple[KeyPath, ConfigValue]]:
     """Yield ``(path, value)`` for every leaf of a document.
 
-    A non-empty dict descends; an empty dict is a leaf; a list is a leaf
-    (lists are set wholesale, elements are not addressed); every scalar
-    and ``None`` is a leaf. This is the one leaf definition shared by the
-    merge, provenance completion and the coverage law over
-    ``model_dump_json()``.
+    A non-empty dict descends; an empty dict is a leaf; every element of a
+    non-empty list is a leaf, addressed as ``[i]``; an empty list, every
+    scalar and ``None`` are leaves. A list element remains one leaf even
+    when it is a mapping: layers add and replace elements as units. This is
+    the one leaf definition shared by the merge, provenance completion and
+    the coverage law over ``model_dump_json()``.
     """
     for key, value in document.items():
         path = (*prefix, key)
         if isinstance(value, Mapping) and value:
             yield from leaves(value, path)
+        elif isinstance(value, list) and value:
+            for index, element in enumerate(value):
+                yield (*path, f"[{index}]"), element
         else:
             yield path, value
 
