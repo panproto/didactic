@@ -75,6 +75,13 @@ except dx.ValidationError as exc:
     # ('email',) validates_failed `email` validator returned False
 ```
 
+A failure inside a nested Model or tagged union is located under the
+field that holds it. Inside a container, the location also carries the
+element's dict key or list index, so a bad entry in a
+`dict[str, Dataset]` field named `datasets` reports
+`("datasets", "train", "corruption")`, and the third element of a
+`tuple[Item, ...]` field reports `("items", 2, ...)`.
+
 Per-entry types in v0.0.1: `missing_required`, `extra_field`,
 `type_error`, `validates_failed`, `axiom_failed`. New types may be
 added in subsequent releases; treat the set as open.

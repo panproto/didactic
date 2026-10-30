@@ -3,8 +3,9 @@
 A field typed as a Model, a tagged union, or a container of either
 validates its value by constructing the inner instance. The inner
 class's ``ValidationError`` is caught, each entry is re-located under the
-field name, the outer class is named, and the outer model keeps
-collecting its sibling fields' errors.
+field name (and, inside a container, the element's dict key or list
+index), the outer class is named, and the outer model keeps collecting
+its sibling fields' errors.
 """
 
 from __future__ import annotations
@@ -34,6 +35,9 @@ class Outer(dx.Model, extra="forbid"):
     inner: Inner = dx.field(default_factory=Inner)
     choice: Kind = dx.field(default_factory=First)
     items: tuple[Inner, ...] = ()
+    named: dict[str, Inner] = dx.field(default_factory=dict)
+    choices: dict[str, Kind] = dx.field(default_factory=dict)
+    nested: dict[str, tuple[Inner, ...]] = dx.field(default_factory=dict)
     top: Literal["x"] = "x"
 
 
@@ -76,13 +80,47 @@ def test_variant_errors_are_relocated_under_the_union_field() -> None:
     assert e.entries[0].type == "type_error"
 
 
-def test_container_element_errors_are_relocated_under_the_field() -> None:
+def test_container_element_errors_carry_the_element_index() -> None:
     with pytest.raises(dx.ValidationError) as info:
         Outer.model_validate({"items": [{"mode": "a"}, {"mode": "z"}]})
+    assert [entry.loc for entry in info.value.entries] == [("items", 1, "mode")]
+
+
+def test_container_element_errors_carry_the_element_index_from_json() -> None:
+    with pytest.raises(dx.ValidationError) as info:
+        Outer.model_validate_json('{"items": [{"mode": "a"}, {"count": "3"}]}')
+    assert [entry.loc for entry in info.value.entries] == [("items", 1, "count")]
+
+
+def test_mapping_value_errors_carry_the_key() -> None:
+    with pytest.raises(dx.ValidationError) as info:
+        Outer.model_validate({"named": {"train": {"mode": "a"}, "dev": {"mode": "z"}}})
     e = info.value
     assert e.model is Outer
-    assert e.entries[0].loc[0] == "items"
-    assert e.entries[0].loc[-1] == "mode"
+    assert [entry.loc for entry in e.entries] == [("named", "dev", "mode")]
+    assert "named.dev.mode" in str(e)
+
+
+def test_mapping_value_errors_carry_the_key_from_json() -> None:
+    with pytest.raises(dx.ValidationError) as info:
+        Outer.model_validate_json('{"named": {"train": {"count": "3"}}}')
+    assert [entry.loc for entry in info.value.entries] == [("named", "train", "count")]
+
+
+def test_mapping_variant_errors_carry_the_key() -> None:
+    with pytest.raises(dx.ValidationError) as info:
+        Outer.model_validate({"choices": {"train": {"kind": "first", "width": "wide"}}})
+    assert [entry.loc for entry in info.value.entries] == [
+        ("choices", "train", "width")
+    ]
+
+
+def test_nested_container_errors_carry_every_key_and_index() -> None:
+    with pytest.raises(dx.ValidationError) as info:
+        Outer.model_validate({"nested": {"train": [{}, {"mode": "z"}]}})
+    assert [entry.loc for entry in info.value.entries] == [
+        ("nested", "train", 1, "mode")
+    ]
 
 
 def test_with_relocates_nested_errors_too() -> None:
