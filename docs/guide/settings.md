@@ -604,6 +604,25 @@ under a root `width: float`) or with another optionality (`att: Spec | None`
 beside `att: Spec`) makes the variants disagree, and the key is refused until
 the tag is set in the same or an earlier layer.
 
+A tagged-union root may itself be the schema of a composition. The document's
+discriminator then selects the variant exactly as it does at a union-typed
+field, every rule above applies at the top level, and the composed value is an
+instance of the selected variant. Since a root has no field default, a
+document that sets no tag is refused at settle with the registered tags.
+
+```python
+optimizer = compose(schema=OptimizerSpec, overlays=[{"kind": "sgd", "momentum": 0.5}])
+assert optimizer == Sgd(momentum=0.5)
+
+try:
+    compose(schema=OptimizerSpec, overlays=[{"lr": 0.5}])
+except ConfigError as error:
+    assert str(error) == (
+        "The document selects no variant of OptimizerSpec (set by overlay:#0): "
+        "set kind to one of ['adam', 'sgd']"
+    )
+```
+
 ## Interpolation and the resolver registry
 
 `${...}` expressions are resolved once, after every layer has merged and the

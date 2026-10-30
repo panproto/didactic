@@ -173,6 +173,18 @@ def target_of_type(annotation: object, spec: dx.FieldSpec | None) -> Target:
     return Leaf(annotation=annotation, spec=spec, optional=optional)
 
 
+def root_target(schema: type[dx.Model]) -> Nested | UnionOf:
+    """Return the target of a root schema.
+
+    A tagged-union root selects its variant by the document's
+    discriminator, exactly as a union-typed field does; any other model is
+    a plain model node.
+    """
+    if is_union_root(schema):
+        return UnionOf(root=schema, spec=None, optional=False)
+    return Nested(model=schema, spec=None, optional=False)
+
+
 def _unwrap(annotation: object) -> object:
     base, _ = unwrap_annotated(cast("TypeForm", annotation))
     return base
@@ -385,7 +397,7 @@ def settable_paths(schema: type[dx.Model]) -> Iterator[tuple[KeyPath, Target]]:
     slot.
     """
     seen: set[KeyPath] = set()
-    yield from _settable_paths(Nested(schema, None, False), (), seen, ())
+    yield from _settable_paths(root_target(schema), (), seen, ())
 
 
 def _settable_paths(
@@ -433,6 +445,7 @@ __all__ = [
     "is_union_root",
     "primary_tag",
     "registered_tags",
+    "root_target",
     "settable_paths",
     "sorted_tags",
     "target_of",

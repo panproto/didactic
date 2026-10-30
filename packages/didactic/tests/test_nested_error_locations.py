@@ -35,9 +35,9 @@ class Outer(dx.Model, extra="forbid"):
     inner: Inner = dx.field(default_factory=Inner)
     choice: Kind = dx.field(default_factory=First)
     items: tuple[Inner, ...] = ()
-    named: dict[str, Inner] = dx.field(default_factory=dict)
-    choices: dict[str, Kind] = dx.field(default_factory=dict)
-    nested: dict[str, tuple[Inner, ...]] = dx.field(default_factory=dict)
+    named: dict[str, Inner] = {}
+    choices: dict[str, Kind] = {}
+    nested: dict[str, tuple[Inner, ...]] = {}
     top: Literal["x"] = "x"
 
 

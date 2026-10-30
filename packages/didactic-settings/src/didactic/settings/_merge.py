@@ -61,6 +61,7 @@ from didactic.settings._schema import (
     field_names,
     field_table,
     registered_tags,
+    root_target,
     sorted_tags,
     target_of,
     target_of_type,
@@ -144,7 +145,8 @@ def merge_layer(
     layer
         The document to merge and the origin its leaves carry.
     schema
-        The root model the document is checked against.
+        The root model the document is checked against. A tagged-union
+        root selects its variant by the document's discriminator.
     provenance
         The record, updated in place with one entry per leaf written.
 
@@ -166,6 +168,9 @@ def merge_layer(
         read, or a typed value the annotation does not admit.
     """
     ctx = _Ctx(origin=layer.origin, prov=provenance, textual=layer.textual)
+    target = root_target(schema)
+    if isinstance(target, UnionOf):
+        return _merge_union(tree, layer.document, target=target, path=(), ctx=ctx)
     return _merge_model(
         tree, layer.document, model=schema, path=(), ctx=ctx, unknown=None
     )
@@ -891,7 +896,7 @@ def settle(
         When a key merged before the tag was known belongs to another
         variant.
     """
-    _settle_model(tree, model=schema, path=(), prov=provenance)
+    _settle_value(tree, root_target(schema), (), provenance)
 
 
 def _settle_model(
@@ -969,15 +974,16 @@ def _selects_no_variant(
     where = dotted(path)
     origin = origin_under(prov, path)
     set_by = f" (set by {origin.label})" if origin is not None else ""
+    subject = f"Config key {where!r}" if path else "The document"
     if not variants_of(root):
         msg = (
-            f"Config key {where!r} selects no variant of {root.__name__}{set_by}; "
+            f"{subject} selects no variant of {root.__name__}{set_by}; "
             f"{root.__name__} registers no variants; load the plugins that define "
             "them before composing"
         )
     else:
         msg = (
-            f"Config key {where!r} selects no variant of {root.__name__}{set_by}: "
+            f"{subject} selects no variant of {root.__name__}{set_by}: "
             f"set {dotted(disc_path)} to one of {list(registered_tags(root))}"
         )
     return ConfigError(msg, path=where)
@@ -1085,7 +1091,9 @@ def defaults_view(
     when no layer set the field. The view is read only; the resolved
     document is the tree itself.
     """
-    return _view_model(tree, schema)
+    target = root_target(schema)
+    model = _view_class(tree, target)
+    return _view_model(tree, model) if model is not None else dict(tree)
 
 
 def _view_model(
@@ -1159,7 +1167,7 @@ def check_tree(
         For a value of the wrong shape at a model, union, map or list
         slot.
     """
-    _check_model(tree, schema, (), provenance)
+    _check_value(tree, root_target(schema), (), provenance)
     return tree
 
 
