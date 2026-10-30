@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-30
+
+### Fixed
+
+- A validation failure inside a `dict[str, T]` or `tuple[T, ...]` field of
+  Models or tagged unions now carries the element's dict key or list index in
+  `ValidationErrorEntry.loc`, at every depth and on both the `model_validate`
+  and `model_validate_json` paths, so a bad `dev` entry of a `datasets` map
+  reports `("datasets", "dev", "corruption")` instead of
+  `("datasets", "corruption")`. ([#88])
+- `didactic-settings` composition accepts a tagged-union root as the schema:
+  the document's discriminator selects the variant exactly as it does at a
+  union-typed field, and a document with no tag is refused at settle with the
+  registered tags instead of rejecting the discriminator as an unknown key.
+  ([#89])
+
+[#88]: https://github.com/panproto/didactic/issues/88
+[#89]: https://github.com/panproto/didactic/issues/89
+
 ## [0.18.0] - 2026-10-16
 
 ### Added

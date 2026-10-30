@@ -36,6 +36,7 @@ from ._schemas import (
     LinearDecoder,
     LstmEncoder,
     MlpDecoder,
+    OptimizerSpec,
     Pipeline,
     RunSpec,
     Sgd,
@@ -1005,3 +1006,63 @@ def test_empty_node_entry_gives_way_to_a_later_leaf_write() -> None:
     assert run.value.model.type_encoder == LstmEncoder()
     assert run.provenance["model.type_encoder.kind"].label == "overlay:#1"
     assert "model.type_encoder" not in run.provenance
+
+
+# -- a tagged-union root schema --------------------------------------------------------
+
+
+def test_union_root_schema_selects_its_variant_by_the_tag(tmp_path: Path) -> None:
+    cfg = _write(tmp_path / "opt.yaml", "kind: sgd\nmomentum: 0.5\n")
+    run = compose_traced(cfg, schema=OptimizerSpec)
+    assert run.value == Sgd(momentum=0.5)
+    assert run.provenance["kind"].label == "file:opt.yaml"
+    assert run.provenance["momentum"].label == "file:opt.yaml"
+    assert run.provenance["lr"].label == "default"
+
+
+def test_union_root_schema_retags_across_layers_and_drops_private_keys() -> None:
+    run = compose_traced(
+        schema=OptimizerSpec,
+        base={"kind": "adam", "betas": [0.8, 0.9], "lr": 0.1},
+        overrides=["kind=sgd"],
+    )
+    assert run.value == Sgd(lr=0.1)
+    assert "betas" not in run.tree
+
+
+def test_union_root_schema_refuses_another_variants_key() -> None:
+    with pytest.raises(UnknownKeyError) as info:
+        compose(schema=OptimizerSpec, overlays=[{"kind": "sgd", "betas": [0.5]}])
+    e = info.value
+    assert e.path == "betas"
+    assert e.declared_by == ("adam",)
+    assert str(e) == (
+        "Unknown config key 'betas' (set by overlay:#0): variant 'sgd' of "
+        "OptimizerSpec (set by overlay:#0) has no field 'betas'; it belongs to "
+        "variant 'adam'"
+    )
+
+
+def test_union_root_schema_refuses_an_unknown_tag() -> None:
+    with pytest.raises(UnknownVariantError) as info:
+        compose(schema=OptimizerSpec, overrides=["kind=rmsprop"])
+    assert info.value.path == "kind"
+    assert info.value.registered == ("adam", "sgd")
+
+
+def test_union_root_schema_without_a_tag_selects_no_variant() -> None:
+    with pytest.raises(ConfigError) as info:
+        compose(schema=OptimizerSpec, overlays=[{"lr": 0.5}])
+    assert info.value.path == ""
+    assert str(info.value) == (
+        "The document selects no variant of OptimizerSpec (set by overlay:#0): "
+        "set kind to one of ['adam', 'sgd']"
+    )
+
+
+def test_union_root_schema_resolves_interpolation_against_the_variant() -> None:
+    run = compose_traced(
+        schema=OptimizerSpec, overlays=[{"kind": "sgd", "momentum": "${lr}"}]
+    )
+    assert run.value == Sgd(momentum=1e-3)
+    assert run.provenance["momentum"].expression == "${lr}"

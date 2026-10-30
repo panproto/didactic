@@ -1765,6 +1765,57 @@ def unwrap_annotated(typ: TypeForm) -> tuple[TypeForm, tuple[Opaque, ...]]:
 # ---------------------------------------------------------------------------
 
 
+def _at_element[V, R](key: str | int, convert: Callable[[V], R], value: V) -> R:
+    """Convert one container element, locating nested failures at its key.
+
+    A container of Models or tagged unions validates each element by
+    constructing the inner instance. When that construction raises a
+    ``ValidationError``, every entry is re-raised with ``loc`` prefixed by
+    the element's dict key or list index, so the enclosing model reports
+    ``("datasets", "train", "corruption")`` rather than losing the key.
+
+    Parameters
+    ----------
+    key
+        The dict key or list index of the element.
+    convert
+        The element translation's ``encode`` or ``from_json`` callable.
+    value
+        The element to convert.
+
+    Returns
+    -------
+    R
+        The converted element.
+
+    Raises
+    ------
+    didactic.ValidationError
+        The element's failures, each located under ``key``.
+    """
+    from didactic.fields._validators import (  # noqa: PLC0415
+        ValidationError,
+        ValidationErrorEntry,
+    )
+
+    try:
+        return convert(value)
+    except ValidationError as nested:
+        raise ValidationError(
+            entries=tuple(
+                ValidationErrorEntry(
+                    loc=(key, *entry.loc),
+                    type=entry.type,
+                    msg=entry.msg,
+                    axiom=entry.axiom,
+                    vertex_id=entry.vertex_id,
+                )
+                for entry in nested.entries
+            ),
+            model=nested.model,
+        ) from None
+
+
 def _classify_tuple(
     args: tuple[TypeForm | EllipsisType, ...],
 ) -> TypeTranslation:
@@ -1778,7 +1829,9 @@ def _classify_tuple(
             if not isinstance(value, list):
                 msg = f"expected JSON list, got {type(value).__name__}"
                 raise TypeError(msg)
-            return tuple(inner.from_json(item) for item in value)
+            return tuple(
+                _at_element(i, inner.from_json, item) for i, item in enumerate(value)
+            )
 
         # see the optional wrapper: the container carries the element
         # translation's auxiliary contribution through.
@@ -1816,7 +1869,9 @@ def _make_list_encoder(
                 f"got {type(v).__name__}"
             )
             raise TypeError(msg)
-        return json.dumps([inner_encode(item) for item in v])
+        return json.dumps(
+            [_at_element(i, inner_encode, item) for i, item in enumerate(v)]
+        )
 
     return enc
 
@@ -1896,7 +1951,9 @@ def _classify_dict(args: tuple[TypeForm, ...]) -> TypeTranslation:
 
     def enc(v: FieldValue) -> Encoded:
         assert isinstance(v, dict)
-        return json.dumps({k: inner.encode(val) for k, val in v.items()})
+        return json.dumps(
+            {k: _at_element(k, inner.encode, val) for k, val in v.items()}
+        )
 
     def dec(s: Encoded) -> dict[str, FieldValue]:
         items: JsonValue = json.loads(s)
@@ -1911,7 +1968,7 @@ def _classify_dict(args: tuple[TypeForm, ...]) -> TypeTranslation:
         if not isinstance(value, dict):
             msg = f"expected JSON object for dict, got {type(value).__name__}"
             raise TypeError(msg)
-        return {k: inner.from_json(v) for k, v in value.items()}
+        return {k: _at_element(k, inner.from_json, v) for k, v in value.items()}
 
     return replace(
         inner,
