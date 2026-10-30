@@ -121,7 +121,7 @@ from didactic.vcs._repo import (
     Repository,
 )
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"
 
 #: Conventional namespace for lens utilities (`dx.lens.identity(...)`,
 #: `dx.lens.Lens`, etc.). The ``lens`` name doubles as a decorator
