@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-11-11
+
+### Fixed
+
+- Building, reading, and dumping tagged-union values held in container fields
+  (`tuple[U, ...]`, `U | None`, `dict[str, U]`, `frozenset[U]`, nestings of
+  these, and Models holding them) now take time linear in the size of the
+  tree. A chain nested `d` levels deep through a `tuple[U, ...]` field cost
+  about `2 ** (d + 1)` Model constructions to build, to read down, or to dump;
+  building it now constructs only the caller's Models, and reading or dumping
+  it constructs none. A stored union value is read back exactly as it was
+  validated, so an `after` validator that is not idempotent is no longer
+  applied a second time when the value is read from a union-typed field or
+  dumped from inside a container. `model_dump`, `model_dump_json`, stored
+  values, and validation errors are otherwise unchanged. ([#91])
+
+[#91]: https://github.com/panproto/didactic/issues/91
+
 ## [0.18.1] - 2026-10-30
 
 ### Fixed

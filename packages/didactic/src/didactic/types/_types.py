@@ -55,7 +55,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from didactic.models._model import Model
-    from didactic.types._typing import Encoded, FieldValue, JsonValue, Opaque
+    from didactic.types._typing import (
+        Encoded,
+        FieldValue,
+        JsonObject,
+        JsonValue,
+        Opaque,
+    )
 
 # A theory-spec record contributed by a translation: a sort declaration
 # or an operation declaration. The shape mirrors ``build_theory_spec``'s
@@ -163,6 +169,63 @@ class TypeTranslation:
     :attr:`auxiliary_ops`. Read both through :meth:`resolve_auxiliary`
     rather than the attributes.
     """
+
+    to_wire: Callable[[Encoded], JsonValue] | None = None
+    """Render a stored value's JSON form without decoding it.
+
+    The result equals the JSON-safe form of ``decode(stored)``, which is
+    what ``model_dump_json`` writes for the value inside a container, read
+    straight out of the stored text. Set by the tagged-union translations,
+    whose stored text is the variant's wire JSON, and by every container
+    over one (``tuple[U, ...]``, ``U | None``, ``dict[str, U]``,
+    ``frozenset[U]``, and their nestings), which apply the element's
+    ``to_wire`` to each stored element. A union subtree is then dumped
+    without decoding any of its Models.
+
+    ``None`` for every other translation, whose JSON form comes from
+    decoding the stored text. That includes a Model-ref recursive alias,
+    whose decoded value drops the constructor tag its stored text carries.
+    """
+
+    from_wire: Callable[[JsonValue], Encoded] | None = None
+    """Rebuild a value's stored text from the JSON form ``to_wire`` describes.
+
+    The input is the JSON-safe form of a value that was validated when it
+    was stored, so the stored text is rebuilt without constructing a Model
+    or running a validator again, and a stored union value decodes in time
+    proportional to its own fields rather than to its whole subtree. Set
+    by the translations whose ``from_json`` would otherwise validate nested
+    Models: the tagged unions, ``Embed`` and bare Model fields, and every
+    container over one of them.
+
+    ``None`` for every other translation, for which :meth:`encode_wire`
+    composes ``encode`` with ``from_json``.
+    """
+
+    def encode_wire(self, value: JsonValue) -> Encoded:
+        """Return the stored text of a value given its JSON-safe form.
+
+        Parameters
+        ----------
+        value
+            The JSON-safe form of a previously validated value of this
+            type, as ``model_dump_json`` renders it inside a container.
+
+        Returns
+        -------
+        str
+            The stored text ``encode`` produced for that value: from
+            :attr:`from_wire` when it is set, and from ``encode`` applied
+            to ``from_json(value)`` otherwise.
+
+        Raises
+        ------
+        TypeError or ValueError
+            If ``value`` does not have the wire shape of this type.
+        """
+        if self.from_wire is not None:
+            return self.from_wire(value)
+        return self.encode(self.from_json(value))
 
     def resolve_auxiliary(
         self,
@@ -1186,14 +1249,13 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
             return {primitive_tag_by_type[float]: value}
         for cls, tag in model_tag_by_class.items():
             if isinstance(value, cls):
-                # Route through ``model_dump_json`` so any nested
-                # ``tuple[Embed[T], ...]`` / ``dict[str, Embed[T]]`` /
-                # nested-Model structures inside the variant get the
-                # JSON-safe walk that ``model_dump`` alone skips.
+                # ``to_wire_dict`` is the JSON object ``model_dump_json``
+                # prints, so nested ``tuple[Embed[T], ...]`` /
+                # ``dict[str, Embed[T]]`` / nested-Model structures inside
+                # the variant get the JSON-safe walk that ``model_dump``
+                # alone skips, read from storage without decoding them.
                 model_value = cast("Model", value)
-                return cast(
-                    "JsonValue", {tag: json.loads(model_value.model_dump_json())}
-                )
+                return cast("JsonValue", {tag: model_value.to_wire_dict()})
         # Sequence values: prefer the ``tuple`` constructor when the
         # alias declares one, even for Python ``list`` input. This
         # keeps storage canonical (round-tripping a Python list and
@@ -1228,7 +1290,10 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
         )
         raise TypeError(msg)
 
-    def decode_one(payload: JsonValue) -> FieldValue:
+    def decode_one(payload: JsonValue, *, stored: bool) -> FieldValue:
+        # ``stored`` marks a payload read back out of ``_storage``: its
+        # Model arms were validated when they were encoded, so they are
+        # rebuilt from their wire dicts rather than validated again.
         if not isinstance(payload, dict):
             msg = (
                 f"alias {alias_name!r} payload must be a single-key dict "
@@ -1258,7 +1323,15 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
             # list -> tuple coercion for nested ``tuple[T, ...]`` fields,
             # ISO-string -> datetime for nested datetime fields).
             model_cls = cast("type[Model]", target)
-            return model_cls.model_validate_json(json.dumps(body))
+            if not stored:
+                return model_cls.model_validate_json(json.dumps(body))
+            if not isinstance(body, dict):
+                msg = (
+                    f"alias {alias_name!r} constructor {tag!r} payload must "
+                    f"be a JSON object; got {type(body).__name__}."
+                )
+                raise TypeError(msg)
+            return model_cls.from_wire_dict(body)
         # container arm; body is a JSON list/dict of inner-encoded values
         if target in {"list", "tuple"}:
             if not isinstance(body, list):
@@ -1268,7 +1341,7 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
                     f"{type(body).__name__}."
                 )
                 raise TypeError(msg)
-            return tuple(decode_one(item) for item in body)
+            return tuple(decode_one(item, stored=stored) for item in body)
         # target == "dict"
         if not isinstance(body, dict):
             msg = (
@@ -1276,16 +1349,16 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
                 f"must be a JSON object; got {type(body).__name__}."
             )
             raise TypeError(msg)
-        return {k: decode_one(v) for k, v in body.items()}
+        return {k: decode_one(v, stored=stored) for k, v in body.items()}
 
     def enc(v: FieldValue) -> Encoded:
         return json.dumps(encode_one(v, set()))
 
     def dec(s: Encoded) -> FieldValue:
-        return decode_one(json.loads(s))
+        return decode_one(json.loads(s), stored=True)
 
     def from_json(v: JsonValue) -> FieldValue:
-        return decode_one(v)
+        return decode_one(v, stored=False)
 
     return TypeTranslation(
         sort=alias_name,
@@ -1320,6 +1393,53 @@ def _alias_sum_translation(alias: TypeAliasType) -> TypeTranslation:
 # variants registered by then; a root with none yet contributes an
 # empty closed sum, which gains its constructors once the variants are
 # imported and the Theory is next built.
+
+
+def _parse_wire(stored: Encoded) -> JsonValue:
+    """Return the wire JSON of a stored tagged-union value.
+
+    A tagged-union translation stores the chosen variant's wire JSON as
+    text, and decoding that text yields a variant whose own wire JSON is
+    the same, so the JSON form of the decoded value is the text parsed;
+    nothing is decoded to a Model.
+
+    Parameters
+    ----------
+    stored
+        The stored text of a tagged-union value.
+
+    Returns
+    -------
+    JsonValue
+        The variant's wire JSON.
+
+    Raises
+    ------
+    json.JSONDecodeError
+        If ``stored`` is not JSON text.
+    """
+    return cast("JsonValue", json.loads(stored))
+
+
+def _print_wire(wire: JsonValue) -> Encoded:
+    """Return the stored text of a tagged-union value given its wire JSON.
+
+    The inverse of :func:`_parse_wire`: the tagged-union encoders store
+    ``json.dumps`` of the variant's wire JSON, so the wire JSON of a
+    stored value is printed back the same way, without validating the
+    variant a second time.
+
+    Parameters
+    ----------
+    wire
+        The wire JSON of a previously validated variant.
+
+    Returns
+    -------
+    str
+        Its stored text.
+    """
+    return json.dumps(wire)
 
 
 def _is_tagged_union_root(cls: type) -> bool:
@@ -1393,14 +1513,15 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
                 )
                 raise ValueError(msg)
             instance = variant_cls.model_validate_json(json.dumps(payload))
-            return cast("JsonValue", json.loads(instance.model_dump_json()))
+            return cast("JsonValue", instance.to_wire_dict())
         for variant_cls in variants_by_value.values():
             if isinstance(value, variant_cls):
-                # Route through ``model_dump_json`` so any nested
-                # ``tuple[Embed[T], ...]`` / ``dict[str, Embed[T]]`` /
-                # nested-Model fields inside the variant get the
-                # JSON-safe walk that ``model_dump`` alone skips.
-                return cast("JsonValue", json.loads(value.model_dump_json()))
+                # ``to_wire_dict`` is the JSON object ``model_dump_json``
+                # prints, so nested ``tuple[Embed[T], ...]`` /
+                # ``dict[str, Embed[T]]`` / nested-Model fields inside the
+                # variant get the JSON-safe walk that ``model_dump`` alone
+                # skips, read from storage without decoding them.
+                return cast("JsonValue", value.to_wire_dict())
         variant_names = sorted(
             cast("type", v).__name__ for v in variants_by_value.values()
         )
@@ -1411,7 +1532,7 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
         )
         raise TypeError(msg)
 
-    def decode_one(payload: JsonValue) -> FieldValue:
+    def select_variant(payload: JsonValue) -> tuple[type[Model], JsonObject]:
         variants_by_value = current_variants()
         if not isinstance(payload, dict):
             msg = (
@@ -1435,21 +1556,25 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
                 f"[{', '.join(known_values)}]."
             )
             raise ValueError(msg)
-        # Route through ``model_validate_json`` so the variant's per-field
-        # ``from_json`` callables get a chance to coerce JSON-shaped values
-        # (e.g. list -> tuple for ``tuple[float, ...]`` fields) before
-        # construction. ``model_validate`` would feed the raw JSON shape
-        # straight to the field encoders, which expect Python-native types.
-        return variant_cls.model_validate_json(json.dumps(payload))
+        return variant_cls, payload
 
     def enc(v: FieldValue) -> Encoded:
         return json.dumps(encode_one(v))
 
     def dec(s: Encoded) -> FieldValue:
-        return decode_one(json.loads(s))
+        # the stored text is the wire JSON of a variant validated when it
+        # was encoded; rebuild it without validating its subtree again.
+        variant_cls, payload = select_variant(json.loads(s))
+        return variant_cls.from_wire_dict(payload)
 
     def from_json(v: JsonValue) -> FieldValue:
-        return decode_one(v)
+        # Route through ``model_validate_json`` so the variant's per-field
+        # ``from_json`` callables get a chance to coerce JSON-shaped values
+        # (e.g. list -> tuple for ``tuple[float, ...]`` fields) before
+        # construction. ``model_validate`` would feed the raw JSON shape
+        # straight to the field encoders, which expect Python-native types.
+        variant_cls, payload = select_variant(v)
+        return variant_cls.model_validate_json(json.dumps(payload))
 
     def aux_spec() -> tuple[tuple[SpecRecord, ...], tuple[SpecRecord, ...]]:
         return _tagged_union_aux_spec(union_name, discriminator, current_variants())
@@ -1461,6 +1586,8 @@ def _tagged_union_translation(cls: type) -> TypeTranslation:
         inner_kind="sum",
         from_json=from_json,
         auxiliary_spec=aux_spec,
+        to_wire=_parse_wire,
+        from_wire=_print_wire,
     )
 
 
@@ -1594,13 +1721,13 @@ def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
                 )
                 raise ValueError(msg)
             instance = variant_cls.model_validate_json(json.dumps(payload))
-            return cast("JsonValue", json.loads(instance.model_dump_json()))
+            return cast("JsonValue", instance.to_wire_dict())
         instance_disc = getattr(cast("object", value), discriminator, None)
         if instance_disc is not None:
             _check_overlap_for(instance_disc)
         for variant_cls in variants.values():
             if isinstance(value, variant_cls):
-                return cast("JsonValue", json.loads(value.model_dump_json()))
+                return cast("JsonValue", value.to_wire_dict())
         variant_names = sorted(cast("type", v).__name__ for v in variants.values())
         value_type_name = type(cast("object", value)).__name__
         msg = (
@@ -1609,7 +1736,7 @@ def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
         )
         raise TypeError(msg)
 
-    def decode_one(payload: JsonValue) -> FieldValue:
+    def select_variant(payload: JsonValue) -> tuple[type[Model], JsonObject]:
         variants = current_variants()
         if not isinstance(payload, dict):
             msg = (
@@ -1633,16 +1760,19 @@ def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
                 f"[{', '.join(known_values)}]."
             )
             raise ValueError(msg)
-        return variant_cls.model_validate_json(json.dumps(payload))
+        return variant_cls, payload
 
     def enc(v: FieldValue) -> Encoded:
         return json.dumps(encode_one(v))
 
     def dec(s: Encoded) -> FieldValue:
-        return decode_one(json.loads(s))
+        # see the single-root decoder: stored text is rebuilt, not revalidated.
+        variant_cls, payload = select_variant(json.loads(s))
+        return variant_cls.from_wire_dict(payload)
 
     def from_json(v: JsonValue) -> FieldValue:
-        return decode_one(v)
+        variant_cls, payload = select_variant(v)
+        return variant_cls.model_validate_json(json.dumps(payload))
 
     return TypeTranslation(
         sort=union_name,
@@ -1651,6 +1781,8 @@ def _classify_tagged_union_union(roots: tuple[type, ...]) -> TypeTranslation:
         inner_kind="sum",
         from_json=from_json,
         auxiliary_spec=aux_spec,
+        to_wire=_parse_wire,
+        from_wire=_print_wire,
     )
 
 
@@ -1843,6 +1975,10 @@ def _classify_tuple(
             is_optional=False,
             inner_kind="list",
             from_json=from_json,
+            to_wire=(
+                None if inner.to_wire is None else _make_list_to_wire(inner.to_wire)
+            ),
+            from_wire=None if inner.from_wire is None else _make_list_from_wire(inner),
         )
     # heterogeneous tuple; defer until we have product-sort support
     msg = (
@@ -1889,6 +2025,57 @@ def _make_list_decoder(
     return dec
 
 
+def _make_list_to_wire(
+    inner_to_wire: Callable[[Encoded], JsonValue],
+) -> Callable[[Encoded], JsonValue]:
+    """Build the ``to_wire`` of a ``tuple[T, ...]`` over a union-holding ``T``.
+
+    Parameters
+    ----------
+    inner_to_wire
+        The element translation's ``to_wire``.
+
+    Returns
+    -------
+    Callable
+        Maps the stored JSON array of element texts to the JSON array of
+        the elements' wire forms.
+    """
+
+    def to_wire(s: Encoded) -> JsonValue:
+        items: JsonValue = json.loads(s)
+        if not isinstance(items, list):
+            msg = f"expected JSON list, got {type(items).__name__}"
+            raise TypeError(msg)
+        return [inner_to_wire(x) for x in cast("list[Encoded]", items)]
+
+    return to_wire
+
+
+def _make_list_from_wire(inner: TypeTranslation) -> Callable[[JsonValue], Encoded]:
+    """Build the ``from_wire`` of a ``tuple[T, ...]`` over a Model-holding ``T``.
+
+    Parameters
+    ----------
+    inner
+        The element translation.
+
+    Returns
+    -------
+    Callable
+        Maps the wire JSON array of a stored tuple back to the stored JSON
+        array of element texts, through the element's ``encode_wire``.
+    """
+
+    def from_wire(v: JsonValue) -> Encoded:
+        if not isinstance(v, list):
+            msg = f"expected JSON list, got {type(v).__name__}"
+            raise TypeError(msg)
+        return json.dumps([inner.encode_wire(item) for item in v])
+
+    return from_wire
+
+
 def _classify_frozenset(args: tuple[TypeForm, ...]) -> TypeTranslation:
     if len(args) != 1:
         msg = f"frozenset must have exactly one type parameter; got {args!r}"
@@ -1925,6 +2112,24 @@ def _classify_frozenset(args: tuple[TypeForm, ...]) -> TypeTranslation:
             raise TypeError(msg)
         return frozenset(inner.from_json(item) for item in value)
 
+    def to_wire(s: Encoded) -> JsonValue:
+        # ``_to_json_safe`` renders a decoded frozenset sorted by the repr
+        # of each element's JSON form. Equal stored texts decode to equal
+        # elements, which the frozenset holds once, so repeats are dropped.
+        assert inner.to_wire is not None
+        items: JsonValue = json.loads(s)
+        if not isinstance(items, list):
+            msg = f"expected JSON list for frozenset, got {type(items).__name__}"
+            raise TypeError(msg)
+        unique = dict.fromkeys(cast("list[Encoded]", items))
+        return sorted((inner.to_wire(x) for x in unique), key=repr)
+
+    def from_wire(v: JsonValue) -> Encoded:
+        if not isinstance(v, list):
+            msg = f"expected JSON list for frozenset, got {type(v).__name__}"
+            raise TypeError(msg)
+        return json.dumps(sorted({inner.encode_wire(item) for item in v}))
+
     return replace(
         inner,
         sort=f"Set {_paren(inner.sort)}",
@@ -1933,6 +2138,8 @@ def _classify_frozenset(args: tuple[TypeForm, ...]) -> TypeTranslation:
         is_optional=False,
         inner_kind="set",
         from_json=from_json,
+        to_wire=None if inner.to_wire is None else to_wire,
+        from_wire=None if inner.from_wire is None else from_wire,
     )
 
 
@@ -1970,6 +2177,22 @@ def _classify_dict(args: tuple[TypeForm, ...]) -> TypeTranslation:
             raise TypeError(msg)
         return {k: _at_element(k, inner.from_json, v) for k, v in value.items()}
 
+    def to_wire(s: Encoded) -> JsonValue:
+        assert inner.to_wire is not None
+        items: JsonValue = json.loads(s)
+        if not isinstance(items, dict):
+            msg = f"expected JSON object for dict, got {type(items).__name__}"
+            raise TypeError(msg)
+        return {
+            k: inner.to_wire(v) for k, v in cast("dict[str, Encoded]", items).items()
+        }
+
+    def from_wire(v: JsonValue) -> Encoded:
+        if not isinstance(v, dict):
+            msg = f"expected JSON object for dict, got {type(v).__name__}"
+            raise TypeError(msg)
+        return json.dumps({k: inner.encode_wire(val) for k, val in v.items()})
+
     return replace(
         inner,
         sort=f"Map String {_paren(inner.sort)}",
@@ -1978,6 +2201,8 @@ def _classify_dict(args: tuple[TypeForm, ...]) -> TypeTranslation:
         is_optional=False,
         inner_kind="map",
         from_json=from_json,
+        to_wire=None if inner.to_wire is None else to_wire,
+        from_wire=None if inner.from_wire is None else from_wire,
     )
 
 
@@ -2130,6 +2355,8 @@ def classify(typ: TypeForm) -> TypeTranslation:
                 inner.inner_kind if inner.inner_kind != "scalar" else "refinement"
             ),
             from_json=inner.from_json,
+            to_wire=inner.to_wire,
+            from_wire=inner.from_wire,
         )
 
     # Symbolic GADT terms are a first-class wire value. They encode as the
@@ -2154,6 +2381,13 @@ def classify(typ: TypeForm) -> TypeTranslation:
         def from_json(v: JsonValue) -> FieldValue:
             return None if v is None else inner.from_json(v)
 
+        def to_wire(s: Encoded) -> JsonValue:
+            assert inner.to_wire is not None
+            return None if s == _NONE_TEXT else inner.to_wire(_unescape_none_text(s))
+
+        def from_wire(v: JsonValue) -> Encoded:
+            return _NONE_TEXT if v is None else _escape_none_text(inner.encode_wire(v))
+
         # ``replace`` carries the inner translation's auxiliary
         # contribution through: wrapping a value in ``T | None`` changes
         # how it is spelled on the wire, not which sorts the parent
@@ -2166,6 +2400,8 @@ def classify(typ: TypeForm) -> TypeTranslation:
             is_optional=True,
             inner_kind=inner.inner_kind,
             from_json=from_json,
+            to_wire=None if inner.to_wire is None else to_wire,
+            from_wire=None if inner.from_wire is None else from_wire,
         )
 
     # scalar
@@ -2533,12 +2769,23 @@ def _embed_translation(base: TypeForm, metadata: tuple[Opaque, ...]) -> TypeTran
         msg = f"expected JSON object for Embed[{target_name}]; got {type(v).__name__}"
         raise TypeError(msg)
 
+    def from_wire(v: JsonValue) -> Encoded:
+        # the wire dict of a stored embedded Model (inside a stored
+        # tagged-union value, say) was validated when it was stored;
+        # rebuild its storage dict without validating its subtree again.
+        if isinstance(v, dict):
+            rebuilt = _resolve_variant(v).from_wire_dict(v)
+            return json.dumps(rebuilt.to_storage_dict())
+        msg = f"expected JSON object for Embed[{target_name}]; got {type(v).__name__}"
+        raise TypeError(msg)
+
     return TypeTranslation(
         sort=f"Embed {target_name}",
         encode=encode,
         decode=decode,
         inner_kind="embed",
         from_json=from_json,
+        from_wire=from_wire,
     )
 
 

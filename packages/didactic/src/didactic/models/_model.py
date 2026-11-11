@@ -587,11 +587,69 @@ class Model(metaclass=ModelMeta):
         Model.model_validate_json : the inverse direction.
         """
         return json.dumps(
-            _to_json_safe(self.model_dump(by_alias=by_alias)),
+            self.to_wire_dict(by_alias=by_alias),
             indent=indent,
             sort_keys=False,
             ensure_ascii=False,
         )
+
+    def to_wire_dict(self, *, by_alias: bool = False) -> JsonObject:
+        """Render ``model_dump``'s JSON-safe form straight from storage.
+
+        The result equals ``_to_json_safe(self.model_dump(by_alias=...))``
+        key for key. A sum-sort field contributes its stored wire JSON
+        parsed, exactly as ``model_dump`` renders it, and a container of
+        tagged-union values is read through its translation's ``to_wire``,
+        so no Model in a union subtree is decoded or constructed. Every
+        other field decodes as ``model_dump`` decodes it; an embedded Model
+        recurses here with the same ``by_alias``.
+
+        Parameters
+        ----------
+        by_alias
+            If ``True``, key each field by its alias where one is set.
+
+        Returns
+        -------
+        dict
+            The JSON object ``model_dump_json`` serialises.
+
+        Notes
+        -----
+        Private API, the inverse of
+        [from_wire_dict][didactic.api.Model.from_wire_dict]. Field encoders
+        store a tagged-union value as this dict printed, and container
+        dumps recurse through it.
+        """
+        cls = type(self)
+        result: JsonObject = {}
+        for fname, spec in cls.__field_specs__.items():
+            key = spec.alias if by_alias and spec.alias else fname
+            # an opaque value has no wire form; ``model_dump`` renders None
+            if spec.is_opaque:
+                result[key] = None
+                continue
+            encoded = self._storage.get(fname)
+            # see ``model_dump``: a sum-sort field's storage is its wire JSON
+            if spec.translation.inner_kind == "sum":
+                result[key] = cast("JsonValue", json.loads(encoded))
+                continue
+            to_wire = spec.translation.to_wire
+            if to_wire is not None:
+                result[key] = to_wire(encoded)
+                continue
+            value = spec.translation.decode(encoded)
+            if isinstance(value, Model):
+                result[key] = value.to_wire_dict(by_alias=by_alias)
+            else:
+                result[key] = _to_json_safe(value)
+        for name in (*cls.__computed_fields__, *cls.__derived_field_names__):
+            value = getattr(self, name)
+            if isinstance(value, Model):
+                result[name] = value.to_wire_dict(by_alias=by_alias)
+            else:
+                result[name] = _to_json_safe(value)
+        return result
 
     @classmethod
     def model_json_schema(cls) -> JsonSchemaDoc:
@@ -817,6 +875,84 @@ class Model(metaclass=ModelMeta):
         # produces a clear KeyError if anyone reads an opaque field on
         # a from_storage_dict-built instance.
         object.__setattr__(new, "_opaque_storage", {})
+        return new
+
+    @classmethod
+    def from_wire_dict(cls, payload: JsonObject) -> Self:
+        """Rebuild an instance from the wire dict of a value of this class.
+
+        Parameters
+        ----------
+        payload
+            The wire dict [to_wire_dict][didactic.api.Model.to_wire_dict]
+            rendered for a previously validated instance of exactly this
+            class (field names as keys, not aliases). Computed and
+            derived field entries are ignored; they are recomputed on
+            access.
+
+        Returns
+        -------
+        Model
+            A new instance whose storage is rebuilt field by field through
+            each translation's ``encode_wire``, **without re-running
+            validation**. A field whose value is a tagged union, an
+            embedded Model, or a container of either keeps its subtree as
+            stored text, so the cost is proportional to this instance's own
+            fields, not to the size of the tree beneath it.
+
+        Raises
+        ------
+        ValueError
+            If ``payload`` lacks a non-opaque field, which a dump of an
+            instance of this class always carries.
+        didactic.ValidationError
+            If an opaque field has no default. Opaque values have no wire
+            form, so a rebuilt instance takes each opaque field's default,
+            as ``model_validate_json`` does.
+
+        Notes
+        -----
+        Private API, the wire counterpart of
+        [from_storage_dict][didactic.api.Model.from_storage_dict]. Field
+        decoders call it on wire JSON read back out of ``_storage``, which
+        was validated when it was encoded; do not feed user-supplied data
+        through this hook.
+        """
+        storage: dict[str, str] = {}
+        opaque_storage: dict[str, FieldValue] = {}
+        for fname, spec in cls.__field_specs__.items():
+            if spec.is_opaque:
+                if spec.is_required:
+                    entry = ValidationErrorEntry(
+                        loc=(fname,),
+                        type="missing_required",
+                        msg=f"required field {fname!r} not supplied",
+                    )
+                    raise ValidationError(entries=(entry,), model=cls)
+                default = spec.make_default()
+                if isinstance(default, MissingType):
+                    msg = f"non-required field {fname!r} returned MISSING"
+                    raise AssertionError(msg)
+                opaque_storage[fname] = default
+                storage[fname] = "null"
+                continue
+            if fname not in payload:
+                msg = (
+                    f"wire dict for {cls.__name__!r} lacks field {fname!r}; "
+                    f"got keys {sorted(payload)!r}"
+                )
+                raise ValueError(msg)
+            wire = payload[fname]
+            # a sum-sort field dumps as its stored wire JSON parsed (see
+            # ``model_dump``), so its stored text is that JSON printed.
+            if spec.translation.inner_kind == "sum":
+                storage[fname] = json.dumps(wire)
+            else:
+                storage[fname] = spec.translation.encode_wire(wire)
+        new = cls.__new__(cls)
+        object.__setattr__(new, "_storage", DictStorage(storage))
+        object.__setattr__(new, "_derived_cache", {})
+        object.__setattr__(new, "_opaque_storage", opaque_storage)
         return new
 
     def to_storage_dict(self) -> dict[str, str]:
@@ -1127,8 +1263,8 @@ def _to_json_safe(value: FieldValue | JsonValue) -> JsonValue:
     if isinstance(value, Term):
         return value.to_spec()
     if isinstance(value, Model):
-        # embedded sub-model; recurse into its model_dump shape
-        return _to_json_safe(value.model_dump())
+        # embedded sub-model; render its model_dump shape from storage
+        return value.to_wire_dict()
     if isinstance(value, dict):
         return {k: _to_json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
