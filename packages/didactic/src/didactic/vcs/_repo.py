@@ -645,43 +645,75 @@ _FIELD_USAGE_MODE_CONSTRAINT = "didactic:usage-mode"
 _FIELD_AXIOM_CONSTRAINT = "didactic:axiom"
 
 
+_FIELD_CONSTRAINTS = (
+    _FIELD_SORT_CONSTRAINT,
+    _FIELD_KIND_CONSTRAINT,
+    _FIELD_REQUIRED_CONSTRAINT,
+    _FIELD_USAGE_MODE_CONSTRAINT,
+    _FIELD_AXIOM_CONSTRAINT,
+)
+
+
 def protocol_from_model(
-    cls: type[Model], *, name: str | None = None
+    cls: type[Model], *, name: str | None = None, whole_values: bool = True
 ) -> panproto.Protocol:
-    """Build the panproto protocol shared by a Model's schema operations."""
+    """Build the panproto protocol shared by a Model's schema operations.
+
+    Parameters
+    ----------
+    cls
+        The Model class.
+    name
+        The protocol's name; defaults to the class name.
+    whole_values
+        Whether a field vertex holds the field's JSON value whole,
+        whatever its shape. The schema does not describe nested fields,
+        so a nested value read as structure conforms to nothing.
+
+    Returns
+    -------
+    panproto.Protocol
+        A protocol over the Model's Theory. Its constraint sorts describe
+        fields and bound no record value, so each is an annotation.
+    """
     import panproto  # noqa: PLC0415
 
     from didactic.theory._theory import build_theory  # noqa: PLC0415
 
-    return panproto.Protocol.from_theories(
-        name=name or cls.__name__,
-        schema_theory=build_theory(cls),
-        obj_kinds=["object", _FIELD_VERTEX_KIND],
-        edge_rules=[
-            {
-                "edge_kind": _FIELD_EDGE_KIND,
-                "src_kinds": ["object"],
-                "tgt_kinds": [_FIELD_VERTEX_KIND],
-            }
-        ],
-        constraint_sorts=[
-            _FIELD_SORT_CONSTRAINT,
-            _FIELD_KIND_CONSTRAINT,
-            _FIELD_REQUIRED_CONSTRAINT,
-            _FIELD_USAGE_MODE_CONSTRAINT,
-            _FIELD_AXIOM_CONSTRAINT,
-        ],
-        nominal_identity=True,
+    theory = build_theory(cls).name
+    return panproto.define_protocol(
+        {
+            "name": name or cls.__name__,
+            "schema_theory": theory,
+            "instance_theory": theory,
+            "obj_kinds": ["object", _FIELD_VERTEX_KIND],
+            "edge_rules": [
+                {
+                    "edge_kind": _FIELD_EDGE_KIND,
+                    "src_kinds": ["object"],
+                    "tgt_kinds": [_FIELD_VERTEX_KIND],
+                }
+            ],
+            "constraint_sorts": list(_FIELD_CONSTRAINTS),
+            "constraint_semantics": dict.fromkeys(_FIELD_CONSTRAINTS, "annotation"),
+            "value_kinds": {_FIELD_VERTEX_KIND: "any"} if whole_values else {},
+            "nominal_identity": True,
+        }
     )
 
 
-def schema_from_model(cls: type[Model]) -> panproto.Schema:
+def schema_from_model(
+    cls: type[Model], *, protocol: panproto.Protocol | None = None
+) -> panproto.Schema:
     """Build a field-addressable panproto Schema from a Model class.
 
     Parameters
     ----------
     cls
         A [Model][didactic.api.Model] subclass.
+    protocol
+        The protocol to build under; defaults to that of
+        ``protocol_from_model``.
 
     Returns
     -------
@@ -694,7 +726,8 @@ def schema_from_model(cls: type[Model]) -> panproto.Schema:
         requiredness, usage mode, and axioms as constraints, plus an explicit
         nominal or structural identity flag.
     """
-    protocol = protocol_from_model(cls)
+    if protocol is None:
+        protocol = protocol_from_model(cls)
     builder = protocol.schema()
     builder.vertex(cls.__name__, "object")
     for field_name, spec in cls.__field_specs__.items():

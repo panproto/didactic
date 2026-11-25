@@ -12,7 +12,11 @@ scalar field, one accessor operation per scalar field, and one
 edge/containment operation per ``Ref[T]`` / ``Embed[T]`` / sum-sorted
 field. An edge points at the sort the field targets whether or not the
 field is optional; ``T | None`` sets an ``optional`` key on the
-operation rather than changing the sort it names. Class
+operation rather than changing the sort it names. The spec leaves the
+sort of another model to that model's own theory;
+[build_theory][didactic.theory._theory.build_theory] declares every such
+sort the spec names, since panproto typechecks a theory against the
+sorts it declares. Class
 axioms are collected on the Python side; their translation into
 panproto ``Equation`` records (parsed via the panproto-Expr parser
 into a ``lhs``/``rhs`` Term pair) is not yet implemented, so the
@@ -35,6 +39,7 @@ didactic.fields._fields.FieldSpec : the per-field record consumed here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from typing import TYPE_CHECKING, TypedDict, cast
 
 if TYPE_CHECKING:
@@ -131,10 +136,36 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
     --------
     build_theory : produces a real ``panproto.Theory`` from this spec.
     """
-    schema_kind = _schema_kind(cls)
     field_specs: dict[str, FieldSpec] = cls.__field_specs__
+    return _spec_of_fields(
+        _schema_kind(cls), field_specs, _indexed_context(field_specs)
+    )
 
-    indexed = _indexed_context(field_specs)
+
+def _spec_of_fields(
+    schema_kind: str,
+    field_specs: Mapping[str, FieldSpec],
+    indexed: _IndexedContext,
+) -> TheorySpec:
+    """Build the Theory spec of a model with the given fields.
+
+    Parameters
+    ----------
+    schema_kind
+        The model's primary sort name, which also prefixes the name of
+        each field's constraint sort.
+    field_specs
+        The fields to emit, keyed by name.
+    indexed
+        The dependent telescope of the model. Its parameters are emitted
+        on the primary sort whether or not ``field_specs`` holds them.
+
+    Returns
+    -------
+    dict
+        The spec; see
+        [build_theory_spec][didactic.theory._theory.build_theory_spec].
+    """
     sorts: list[dict[str, JsonValue]] = [_primary_sort(schema_kind, indexed.parameters)]
     ops: list[dict[str, JsonValue]] = []
     # class-level axioms are collected on cls.__class_axioms__ but NOT
@@ -253,6 +284,61 @@ def build_theory_spec(cls: type[Model]) -> TheorySpec:
         "eqs": eqs,
         "directed_eqs": directed_eqs,
         "policies": [],
+    }
+
+
+def with_external_sorts(
+    spec: TheorySpec, field_specs: Mapping[str, FieldSpec]
+) -> TheorySpec:
+    """Declare the other models' sorts a spec names.
+
+    Parameters
+    ----------
+    spec
+        The spec of a model with fields ``field_specs``.
+    field_specs
+        The fields, whose translations say which sorts belong to other
+        models: the target of a ``Ref`` or ``Embed`` field, and the
+        models a sum-sorted field's constructors take.
+
+    Returns
+    -------
+    dict
+        A spec with one open, parameterless structural sort appended for
+        each such sort that ``spec`` does not declare itself.
+
+    Notes
+    -----
+    The declaration brings the name into scope and says nothing more
+    about it; the model's own theory carries its fields. Only the sorts
+    of models are declared, so a sort that is undeclared for any other
+    reason still fails to typecheck. The result is what panproto is
+    given and is not what is fingerprinted: a spec names the same sorts
+    with and without it.
+    """
+    declared = {cast("str", sort["name"]) for sort in spec["sorts"]}
+    external: list[str] = []
+
+    def name_sort(name: str) -> None:
+        if name not in declared:
+            declared.add(name)
+            external.append(name)
+
+    for field_spec in field_specs.values():
+        translation = field_spec.translation
+        if translation.inner_kind == "ref":
+            name_sort(_structural_target(translation, "Ref "))
+        elif translation.inner_kind == "embed":
+            name_sort(_structural_target(translation, "Embed "))
+        for op in translation.resolve_auxiliary()[1]:
+            # a constructor's inputs are ``[name, sort, implicit]`` rows
+            for row in cast("list[list[JsonValue]]", op["inputs"]):
+                if isinstance(row[1], str):
+                    name_sort(row[1])
+
+    return {
+        **spec,
+        "sorts": [*spec["sorts"], *(_primary_sort(name) for name in external)],
     }
 
 
@@ -571,7 +657,7 @@ def _model_inputs(
 # ---------------------------------------------------------------------------
 
 
-def build_theory(cls: type) -> panproto.Theory:
+def build_theory(cls: type[Model]) -> panproto.Theory:
     """Materialise a ``panproto.Theory`` from a Model class.
 
     Parameters
@@ -584,9 +670,9 @@ def build_theory(cls: type) -> panproto.Theory:
     panproto.Theory
         The Theory produced by ``panproto.create_theory(spec)``. For a
         class with multiple Model parents, the result is the panproto
-        colimit (pushout) of the parent theories over their lowest
-        common ancestor; otherwise it's the flat theory built from
-        ``cls``'s ``__field_specs__``.
+        colimit (pushout) of the parents' fields over the ones they
+        share; otherwise it's the flat theory built
+        from ``cls``'s ``__field_specs__``.
 
     Raises
     ------
@@ -614,8 +700,9 @@ def build_theory(cls: type) -> panproto.Theory:
     parents = _model_parents(cls)
     if len(parents) <= 1:
         # single (or no) Model inheritance: the flat spec is correct
-        spec = build_theory_spec(cls)
-        theory = panproto.create_theory(_spec_payload(spec))
+        theory = _theory_of_fields(
+            cls, cls.__field_specs__, _indexed_context(cls.__field_specs__)
+        )
         panproto.typecheck_theory(theory)
         return theory
 
@@ -626,7 +713,40 @@ def build_theory(cls: type) -> panproto.Theory:
     return theory
 
 
-def _model_parents(cls: type) -> list[type]:
+def _theory_of_fields(
+    cls: type[Model],
+    field_specs: Mapping[str, FieldSpec],
+    indexed: _IndexedContext,
+    *,
+    name: str | None = None,
+) -> panproto.Theory:
+    """Materialise the Theory of ``cls`` restricted to ``field_specs``.
+
+    Parameters
+    ----------
+    cls
+        The model whose primary sort the fields are operations on.
+    field_specs
+        The fields, keyed by name.
+    indexed
+        The dependent telescope of ``cls``.
+    name
+        The Theory's name; defaults to that of the primary sort.
+
+    Returns
+    -------
+    panproto.Theory
+        The Theory, declaring every other model's sort it names.
+    """
+    import panproto  # noqa: PLC0415
+
+    spec = _spec_of_fields(_schema_kind(cls), field_specs, indexed)
+    if name is not None:
+        spec["name"] = name
+    return panproto.create_theory(_spec_payload(with_external_sorts(spec, field_specs)))
+
+
+def _model_parents(cls: type[Model]) -> list[type[Model]]:
     """Return ``cls``'s immediate Model bases in declaration order.
 
     Parameters
@@ -650,7 +770,7 @@ def _model_parents(cls: type) -> list[type]:
     ]
 
 
-def _lowest_common_model_ancestor(parents: list[type]) -> type:
+def _lowest_common_model_ancestor(parents: list[type[Model]]) -> type[Model]:
     """Find the lowest common ancestor of ``parents`` in the Model lineage.
 
     Parameters
@@ -680,8 +800,21 @@ def _lowest_common_model_ancestor(parents: list[type]) -> type:
     return candidates[0] if candidates else Model
 
 
-def _build_colimit_theory(cls: type, parents: list[type]) -> panproto.Theory:
-    """Compute the pushout of two parent theories over their LCA.
+def _same_emission(
+    owner: type[Model], name: str, left: FieldSpec, right: FieldSpec
+) -> bool:
+    """Whether two specs of one field of ``owner`` emit the same records."""
+    kind = _schema_kind(owner)
+    unindexed = _IndexedContext((), frozenset(), ())
+    return _spec_of_fields(kind, {name: left}, unindexed) == _spec_of_fields(
+        kind, {name: right}, unindexed
+    )
+
+
+def _build_colimit_theory(
+    cls: type[Model], parents: list[type[Model]]
+) -> panproto.Theory:
+    """Compute the pushout of the parents' fields over the shared ones.
 
     Parameters
     ----------
@@ -693,36 +826,78 @@ def _build_colimit_theory(cls: type, parents: list[type]) -> panproto.Theory:
     Returns
     -------
     panproto.Theory
-        The colimit Theory; equivalent to building ``cls`` as a flat
-        theory but with panproto's categorical join validated.
+        The colimit Theory; it has the sorts and operations of the flat
+        theory of ``cls``, with panproto's categorical join validated.
+
+    Raises
+    ------
+    panproto.GatError
+        If two parents declare a field at different types, neither has
+        it from a common ancestor, and ``cls`` does not redeclare it.
 
     Notes
     -----
-    For more than two parents, the colimit is computed left-to-right.
-    The result for ``class D(A, B, C)`` is
-    ``colimit(colimit(A, B, lca(A, B)), C, lca(...))``.
+    A field inherited by ``cls`` is an operation on the sort of ``cls``,
+    so each parent contributes its fields renamed to that sort: the
+    theory of ``cls`` restricted to them. The theories of the ancestor
+    and of the parents are then included in one another by name, which
+    is what ``panproto.colimit_theories`` joins along.
+
+    An overridden field belongs to no parent's contribution. That is a
+    field ``cls`` redeclares, and a field two parents have from a common
+    ancestor that differs, in a parent, from the one ``cls`` ends up
+    with.
+
+    For more than two parents, the colimit is computed left-to-right,
+    over the fields two parents have from a common ancestor.
     """
     import panproto  # noqa: PLC0415
 
-    accumulator = panproto.create_theory(_spec_payload(build_theory_spec(parents[0])))
-    accumulator_cls: type = parents[0]
+    from didactic.models._meta import read_class_annotations  # noqa: PLC0415
+
+    field_specs = cls.__field_specs__
+    indexed = _indexed_context(field_specs)
+    redeclared = read_class_annotations(cls).keys()
+
+    ancestral = {
+        name
+        for left, right in combinations(parents, 2)
+        for name in _lowest_common_model_ancestor([left, right]).__field_specs__
+    }
+
+    def contribution(parent: type[Model]) -> dict[str, FieldSpec]:
+        return {
+            name: spec
+            for name, spec in parent.__field_specs__.items()
+            if name not in redeclared
+            and (
+                name not in ancestral
+                or _same_emission(cls, name, spec, field_specs[name])
+            )
+        }
+
+    joined = contribution(parents[0])
+    accumulator = _theory_of_fields(cls, joined, indexed, name=_schema_kind(parents[0]))
 
     for parent in parents[1:]:
-        ancestor = _lowest_common_model_ancestor([accumulator_cls, parent])
-        ancestor_theory = panproto.create_theory(
-            _spec_payload(build_theory_spec(ancestor))
-        )
-        next_theory = panproto.create_theory(_spec_payload(build_theory_spec(parent)))
+        fields = contribution(parent)
+        shared = {
+            name: spec
+            for name, spec in fields.items()
+            if name in ancestral and name in joined
+        }
         accumulator = panproto.colimit_theories(
-            accumulator, next_theory, ancestor_theory
+            accumulator,
+            _theory_of_fields(cls, fields, indexed, name=_schema_kind(parent)),
+            _theory_of_fields(cls, shared, indexed),
         )
-        accumulator_cls = parent
+        joined = {**joined, **fields}
 
-    # finally fold in any cls-only fields by colimiting against the
-    # immediate spec of cls; the shared ancestor is the accumulated
-    # theory we just built
-    cls_theory = panproto.create_theory(_spec_payload(build_theory_spec(cls)))
-    return panproto.colimit_theories(accumulator, cls_theory, accumulator)
+    # finally join the fields cls declares: every sort and operation of the
+    # accumulated theory is one of the flat theory of cls
+    return panproto.colimit_theories(
+        accumulator, _theory_of_fields(cls, field_specs, indexed), accumulator
+    )
 
 
 __all__ = [

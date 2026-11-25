@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 
 import pytest
+from typing import cast
+
 import panproto
 
 import didactic.api as dx
@@ -87,18 +89,31 @@ def test_fresh_repo_has_no_branches_or_tags(fresh_repo_path: Path) -> None:
 # -- staging and committing -------------------------------------------
 
 
-def _build_minimal_schema(vertex: str = "ping") -> panproto.Schema:
+def _build_minimal_schema(
+    vertex: str = "ping", properties: tuple[str, ...] = ("id",)
+) -> panproto.Schema:
     """Construct a minimal panproto schema for staging tests.
 
-    A schema with no vertices is rejected by the validator, so we add
-    a single ``string`` vertex to satisfy the protocol's edge rules.
+    The schema is one object with the given properties. A dotted name is
+    a property of the one before the dot, and ``[]`` marks a list of
+    strings. The default is the ``id`` that most records here carry.
     Passing a distinct ``vertex`` name yields a schema that differs from
     the default, which a second commit needs to avoid panproto's
     ``"no changes detected"`` rejection.
     """
     proto = panproto.get_builtin_protocol("openapi")
     builder = proto.schema()
-    builder.vertex(vertex, "string")
+    builder.vertex(vertex, "object")
+    for path in properties:
+        parent, _, name = f"{vertex}.{path}".rpartition(".")
+        name, is_array = name.removesuffix("[]"), name.endswith("[]")
+        nested = any(other.startswith(f"{path}.") for other in properties)
+        kind = "array" if is_array else "object" if nested else "string"
+        builder.vertex(f"{parent}.{name}", kind)
+        builder.edge(parent, f"{parent}.{name}", "prop", name)
+        if is_array:
+            builder.vertex(f"{parent}.{name}.item", "string")
+            builder.edge(f"{parent}.{name}", f"{parent}.{name}.item", "items")
     return builder.build()
 
 
@@ -295,7 +310,22 @@ def test_decoded_data_at_preserves_mixed_schemas_values_and_order(
     """One commit may decode datasets bound to distinct persisted schemas."""
     repo = dx.Repository.init(fresh_repo_path)
 
-    repo.add(_build_minimal_schema("configuration"))
+    repo.add(
+        _build_minimal_schema(
+            "configuration",
+            (
+                "id",
+                "name",
+                "enabled",
+                "missing",
+                "retries",
+                "ratio",
+                "nested",
+                "nested.labels[]",
+                "nested.empty[]",
+            ),
+        )
+    )
     initial_config = fresh_repo_path / "initial-config.json"
     initial_config.write_text('[{"id": "config-1"}]')
     repo.add_data(initial_config, key="configuration")
@@ -310,7 +340,7 @@ def test_decoded_data_at_preserves_mixed_schemas_values_and_order(
 
     # The first dataset explicitly reuses an older schema. The second uses the
     # schema staged for this commit, without changing HEAD during staging.
-    repo.add(_build_minimal_schema("event"))
+    repo.add(_build_minimal_schema("event", ("event",)))
     configuration_records = [
         {
             "name": "alpha",
@@ -407,14 +437,15 @@ def test_decoded_data_at_tampered_dataset_raises_typed_error(
     """Corrupt canonical data cannot escape as an untyped decoder failure."""
     repo = dx.Repository.init(fresh_repo_path)
     repo.add(_build_minimal_schema())
-    objects = fresh_repo_path / ".panproto" / "objects"
-    before_data = set(objects.glob("*/*"))
 
     data_file = fresh_repo_path / "records.json"
     data_file.write_bytes(_RECORDS)
     repo.add_data(data_file, key="records")
-    after_data = set(objects.glob("*/*"))
-    (dataset_object,) = after_data - before_data
+    index = panproto.Repository.open(str(fresh_repo_path)).index()
+    (staged,) = cast("list[dict[str, str]]", index["staged_data"])
+    data_id = staged["data_id"]
+    objects = fresh_repo_path / ".panproto" / "objects"
+    dataset_object = objects / data_id[:2] / data_id[2:]
     cid = repo.commit("schema+data", author="Test <test@example.com>")
 
     stored = dataset_object.read_bytes()
