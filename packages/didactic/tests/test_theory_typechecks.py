@@ -166,9 +166,9 @@ def test_the_gate_would_catch_the_regression_returning() -> None:
     original did: the accessor produces a closed sort it does not
     construct.
     """
-    from didactic.theory._theory import build_theory_spec
+    from didactic.theory._theory import build_theory_spec, with_external_sorts
 
-    spec = build_theory_spec(Unions)
+    spec = with_external_sorts(build_theory_spec(Unions), Unions.__field_specs__)
     for sort in spec["sorts"]:
         constructors = sort.get("constructors")
         if isinstance(constructors, list):

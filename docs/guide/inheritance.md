@@ -90,17 +90,23 @@ class Both(Reads, Writes):
     note: str = ""
 ```
 
-When `Both`'s Theory is built, didactic walks `Both`'s immediate
-parents (`Reads` and `Writes`), finds their lowest common ancestor in
-the Model lineage (`Shared`), and computes the colimit:
+When `Both`'s Theory is built, didactic takes the fields of `Both`'s
+immediate parents (`Reads` and `Writes`) as fields of `Both`, and joins
+the two Theories over the fields both parents have from a common
+ancestor in the Model lineage (here `Shared`'s `id`):
 
 ```text
-panproto.colimit_theories(Reads.__theory__, Writes.__theory__, Shared.__theory__)
+panproto.colimit_theories(
+    Both restricted to id, read_count,
+    Both restricted to id, write_count,
+    Both restricted to id,
+)
 ```
 
 The result is the categorical pushout. panproto validates that the
-join is consistent (the shared sub-theory's sorts and operations
-appear with the same shape in both parents).
+join is consistent (a field both parents have appears with the same
+shape in each). A field `Both` redeclares, or one that a parent
+overrides, is joined as `Both` ends up with it.
 
 For three or more parents, the colimit is computed left-to-right.
 The end result is the same panproto Theory you would get by listing

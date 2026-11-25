@@ -38,6 +38,27 @@ if TYPE_CHECKING:
     from didactic.types._typing import FieldValue, JsonValue
 
 
+def _codec_schema(cls: type[Model]) -> panproto.Schema:
+    """Build the schema ``cls`` is encoded under.
+
+    The codecs write a nested value as structure, so the schema's
+    protocol does not hold field values whole. It has a name of its own,
+    since panproto resolves a schema's protocol by name and a repository
+    schema of ``cls`` does hold them whole.
+    """
+    from didactic.vcs._repo import (  # noqa: PLC0415
+        protocol_from_model,
+        schema_from_model,
+    )
+
+    return schema_from_model(
+        cls,
+        protocol=protocol_from_model(
+            cls, name=f"{cls.__name__}.codec", whole_values=False
+        ),
+    )
+
+
 def emit(protocol: str, instance: Model) -> bytes:
     """Encode ``instance`` as bytes in the named ``protocol``.
 
@@ -63,10 +84,8 @@ def emit(protocol: str, instance: Model) -> bytes:
     """
     import panproto  # noqa: PLC0415
 
-    from didactic.vcs._repo import schema_from_model  # noqa: PLC0415
-
     registry = panproto.IoRegistry()
-    schema = schema_from_model(type(instance))
+    schema = _codec_schema(type(instance))
     panproto_instance = _build_instance(schema, instance)
     return registry.emit(protocol, schema, panproto_instance)
 
@@ -96,10 +115,8 @@ def parse[M: Model](protocol: str, data: bytes, *, schema: type[M]) -> M:
     """
     import panproto  # noqa: PLC0415
 
-    from didactic.vcs._repo import schema_from_model  # noqa: PLC0415
-
     registry = panproto.IoRegistry()
-    panproto_schema = schema_from_model(schema)
+    panproto_schema = _codec_schema(schema)
     instance = registry.parse(protocol, panproto_schema, data)
     payload = _instance_to_payload(instance)
     coerced = _coerce_payload(schema, payload)

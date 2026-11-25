@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-11-25
+
+### Changed
+
+- `didactic` requires `panproto>=0.78.0`. ([#93])
+
+### Fixed
+
+- A Model's Theory declares the sort of every other Model it names: the target
+  of a `Ref`, `Embed` or Model-typed field, and the Models a tagged union or a
+  recursive alias constructs from. Panproto 0.77 rejects a Theory that leaves
+  one undeclared. `build_theory_spec` and structural fingerprints are
+  unchanged. ([#93])
+- The Theory of a Model with several Model parents is the pushout of their
+  fields as fields of the Model, so inherited accessors take the Model's own
+  sort. They kept the parents' sorts before, and panproto 0.77 rejects that
+  join. Unrelated parents that declare a field at the same type now join.
+- A Model's records can be staged in a `Repository` under panproto 0.78: the
+  constraint sorts of the Model's schema are annotations, and a field holds its
+  JSON value whole, nested Models included.
+
+[#93]: https://github.com/panproto/didactic/issues/93
+
 ## [0.18.2] - 2026-11-11
 
 ### Fixed

@@ -403,7 +403,7 @@ class ModelMeta(type):
         if cached is None:
             from didactic.theory._theory import build_theory  # noqa: PLC0415
 
-            cached = build_theory(cls)
+            cached = build_theory(cast("type[Model]", cls))
             cls.__theory_cache__ = cached
         return cached
 
